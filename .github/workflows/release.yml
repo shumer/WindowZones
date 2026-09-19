@@ -1,0 +1,114 @@
+name: Signed release candidate
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag on main history, for example v0.1.0
+        required: true
+        type: string
+      build_number:
+        description: Positive build number, greater than every published build
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: signed-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: write
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      EXPECTED_SDK: '26.5'
+      RELEASE_TAG: ${{ inputs.tag }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      GH_TOKEN: ${{ github.token }}
+      BUNDLE_ID: ${{ vars.BUNDLE_ID }}
+      SU_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
+      SU_FEED_URL: https://github.com/shumer/WindowZones/releases/latest/download/appcast.xml
+      NOTARY_PROFILE: WindowZones-CI
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1.
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - name: Validate release source and configuration
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess
+          tag = os.environ['RELEASE_TAG']
+          if not re.fullmatch(r'v\d+\.\d+\.\d+', tag):
+              raise SystemExit('Expected a version tag such as v0.1.0')
+          if not re.fullmatch(r'[1-9]\d*', os.environ['BUILD_NUMBER']):
+              raise SystemExit('Expected a positive build number')
+          if not os.environ['BUNDLE_ID']:
+              raise SystemExit('Release environment variables are incomplete')
+          subprocess.run(['git', 'merge-base', '--is-ancestor', 'HEAD', 'origin/main'], check=True)
+          subprocess.run(['git', 'rev-parse', '--verify', 'refs/tags/' + tag], check=True)
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write('VERSION=' + tag[1:] + '\n')
+              out.write('DOWNLOAD_BASE_URL=https://github.com/shumer/WindowZones/releases/download/' + tag + '\n')
+          PY
+          test "$(uname -m)" = arm64
+          test "$(xcrun --show-sdk-version)" = "$EXPECTED_SDK"
+          xcodebuild -version
+          swift --version
+      - name: Verify increasing published build number
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[]' | jq -s '.' > "$RUNNER_TEMP/releases.json"
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          releases = json.loads((Path(os.environ['RUNNER_TEMP']) / 'releases.json').read_text())
+          for release in releases:
+              if release['tag_name'] == os.environ['RELEASE_TAG']:
+                  raise SystemExit('A release for this tag already exists')
+              if release['draft']:
+                  continue
+              assets = [a for a in release['assets'] if a['name'] == 'build-info.json']
+              if len(assets) != 1:
+                  raise SystemExit('Published release is missing build metadata')
+              previous = json.loads(subprocess.check_output(['gh', 'api', '-H', 'Accept: application/octet-stream', assets[0]['url']]))
+              if int(os.environ['BUILD_NUMBER']) <= int(previous['build']):
+                  raise SystemExit('The build number must increase')
+          PY
+      - name: Test application
+        run: ./scripts/test.sh
+      - name: Validate update signing keys
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          public_key="$(xcrun swift -module-cache-path .build/ModuleCache scripts/check-update-key.swift --print-public-key)"
+          printf 'SU_PUBLIC_ED_KEY=%s\n' "$public_key" >> "$GITHUB_ENV"
+      - name: Import release credentials
+        env:
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: python3 scripts/ci-signing.py
+      - name: Build, notarize, staple and sign update
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: ./scripts/release.sh
+      - name: Create draft release
+        run: |
+          gh release create "$RELEASE_TAG" --draft --verify-tag --title "WindowZones $VERSION" --notes-file docs/release/ReleaseNotes.md
+          gh release upload "$RELEASE_TAG" "build/release/$VERSION-$BUILD_NUMBER/WindowZones-$VERSION-arm64.zip" "build/release/$VERSION-$BUILD_NUMBER/SHA256SUMS" "build/release/$VERSION-$BUILD_NUMBER/build-info.json" "build/release/$VERSION-$BUILD_NUMBER/appcast.xml"
+      - name: Retain notarization evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1.
+        with:
+          name: notarization-evidence
+          path: build/release/**/notarization.json
+          if-no-files-found: ignore
+      - name: Remove release credentials
+        if: always()
+        run: python3 scripts/ci-cleanup.py
