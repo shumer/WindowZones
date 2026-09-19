@@ -56,3 +56,7 @@ Variables:
 Локально: синтаксис shell/Python, генерация appcast на искусственном fixture и отказ при некорректной конфигурации. Реальная Developer ID подпись, CI на Xcode 26.6, notarization, чистая установка и полный цикл Sparkle ещё не подтверждены.
 
 Источники: [Sparkle manual signing](https://sparkle-project.org/documentation/sandboxing/), [Sparkle publishing](https://sparkle-project.org/documentation/publishing/), [GitHub macOS arm64 image](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md). Проверены 19 сентября 2026.
+
+## Ключ WindowZones
+
+Для WindowZones создан отдельный ключ Sparkle в локальной связке ключей, account `com.shumer.WindowZones`. Приватный ключ хранится также в GitHub environment release, secret SPARKLE_PRIVATE_KEY. Не заменять ключ при обычном выпуске. Публичный ключ включён в Resources/Info.plist; CI дополнительно проверяет соответствие секрету.
