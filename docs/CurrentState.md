@@ -1,27 +1,26 @@
 # Текущее состояние WindowZones
 
+Последовательный план после выпуска: [NextSteps.md](NextSteps.md).
 Обновлено 19 сентября 2026. Этот файл описывает текущую сборку. История измерений находится в Stage0Results.md и карточках задач.
 
-## Текущая работа: ранний выпуск 0.1
+## Выпуск 0.1.0 опубликован
 
-Пользователь поручил выпуск 0.1 с иконкой, базовыми настройками, автозапуском, Sparkle и GitHub CI/notarization. Публичный репозиторий: https://github.com/shumer/WindowZones. Initial commit 63f2070 отправлен в main. Environment release создан, BUNDLE_ID=com.shumer.WindowZones. Это изменение приоритета roadmap, не закрытие прежней матрицы AX/drag.
+Релиз: https://github.com/shumer/WindowZones/releases/tag/v0.1.0. Tag v0.1.0 закреплён за 36bbe6f, после публикации не перемещать. Пользователь явно поручил ранний выпуск перед дальнейшими улучшениями; это не закрывает всю матрицу AX/drag.
 
-Реализовано:
+Реализованы иконка с воспроизводимым генератором, базовые AppKit-настройки, opt-in автозапуск через SMAppService.mainApp, ручные и автоматические проверки Sparkle 2.10.0. Постоянный bundle ID: com.shumer.WindowZones. Feed: https://github.com/shumer/WindowZones/releases/latest/download/appcast.xml.
 
-- Иконка Resources/AppIcon.icns с воспроизводимым AppKit генератором.
-- Settings.swift: версия, opt-in SMAppService.mainApp, opt-in автоматическая проверка, ручная проверка обновлений, Accessibility. Обычный запуск больше не показывает диагностику; без AX открывает настройки.
-- Sparkle 2.10.0 exact и Package.resolved. Framework встроен с корректным rpath, вложенная подпись. Канал CI: https://github.com/shumer/WindowZones/releases/latest/download/appcast.xml.
-- Локальная build/WindowZones.app подписана Developer ID Application: Oleksandr Shumenko (MW9955TT6R), hardened runtime. Версия0.1.0, build1, постоянный bundle ID com.shumer.WindowZones. В этой локальной сборке нет ключа/feed, обновления пока отключены. Smoke запуск вне sandbox завершился с кодом0. Автозапуск на машине не включался.
-- Release workflow: tests, key validation, temporary Keychain, Developer ID, notarization, staple/Gatekeeper, ZIP, подписанный appcast, draft release. Секреты не выводятся. Sparkle ключи32/96byte проверяются штатной подписью challenge.
+GitHub environment release настроен. После исправления NOTARY_ISSUER_ID workflow 35454801082 успешно подписал, нотарифицировал и упаковал приложение. Ключ Sparkle хранится в локальном Keychain account com.shumer.WindowZones и release secret; не менять его для обычных обновлений. Лицензия Sparkle включена в приложение.
 
-45 локальных тестов прошли. SDK локально27.0, CI pinned Xcode26.6/SDK26.5, arm64, минимум macOS15. CI 35454030735 завершился успешно: тесты, сборка и упаковка. Настоящее обновление между версиями, чистая установка, login и визуальная приёмка настроек ещё не выполнены. CUA продолжает разрешать путь приложения как старый local.windowzones.stage0 и не видит новый bundleID; это ограничение инструмента, smoke подтверждён отдельно.
+Проверено:
 
-## Что нужно для продолжения выпуска
+- 45 unit tests, локальные сборка и smoke. Локальный SDK 27.0, CI Xcode 26.6 / SDK 26.5. Минимум macOS 15, только arm64.
+- У скачанного артефакта проверены SHA256, Developer ID, hardened runtime, stapled notarization и Gatekeeper: Notarized Developer ID.
+- Подпись архива EdDSA проверена независимо, публичный appcast соответствует артефакту.
+- Настройки и иконка осмотрены на реальном Mac. Ручная проверка Sparkle сообщает, что 0.1.0 актуальна.
+- Изолированная тестовая копия с версией 0.0.0 скачала опубликованную 0.1.0 через Sparkle, установила её и перезапустилась. Версия, подпись и notarization после обновления проверены; executable совпадает с опубликованным.
+- Опубликованное приложение установлено в /Applications/WindowZones.app и запущено. Автозапуск и автоматическая проверка выключены.
 
-1. Checks CI успешно прошёл. Текущий блокер: NOTARY_ISSUER_ID в release не является UUID; пользователь получил запрос исправить этот секрет. Run35454636661 завершился на проверке формата до отправки в Apple.
-2. Пользователь заполняет environment release. Все шесть секретов теперь настроены. Отдельный ключ Sparkle создан в Keychain account com.shumer.WindowZones и передан в GitHub secret напрямую; временный файл удалён. Публичный ключ вычисляет CI, vars.SPARKLE_PUBLIC_KEY только необязательный pin.
-3. Неопубликованный tag v0.1.0 создан и обновлялся при отладке CI. После исправления секрета повторить workflow release.yml tag=v0.1.0 build_number=1. Проверить notarization Accepted и draft assets.
-4. До выпуска проверить подписанный артефакт, настройки/AX/login и реальный upgrade. Не выдавать draft за опубликованный релиз.
+Не проверены регистрация автозапуска и настоящий новый вход в систему, установка на чистом профиле, повреждённое обновление и полный uninstall. Accessibility для постоянного bundle ID пока не выдан. Тестовые копии остановлены. Релиз ранний, с известными ограничениями drag и совместимости.
 
 ## Последние измерения предыдущей сборки
 
@@ -51,7 +50,7 @@ CUA запрещает управление Terminal. Не обходить за
 
 Превью: docs/design/picker-light.png и picker-dark.png. Предложение: docs/design/ProductReview.html. ProductReview.template.html является шаблоном.
 
-Изменения сохранены в рабочей папке. Коммит и публикация не выполнялись.
+Код релиза сохранён в GitHub. Исторические измерения выше относятся к предыдущим сборкам.
 
 ## Последнее уточнение UX
 
