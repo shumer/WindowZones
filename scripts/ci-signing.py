@@ -7,10 +7,19 @@ from pathlib import Path
 import re
 import secrets
 import subprocess
+import uuid
 
 required = ['DEVELOPER_ID_P12', 'DEVELOPER_ID_P12_PASSWORD', 'NOTARY_KEY_P8', 'NOTARY_KEY_ID', 'NOTARY_ISSUER_ID']
 if any(not os.environ.get(key) for key in required):
     raise SystemExit('Release signing secrets are incomplete')
+os.environ['NOTARY_KEY_ID'] = os.environ['NOTARY_KEY_ID'].strip()
+os.environ['NOTARY_ISSUER_ID'] = os.environ['NOTARY_ISSUER_ID'].strip()
+try:
+    uuid.UUID(os.environ['NOTARY_ISSUER_ID'])
+except ValueError:
+    raise SystemExit('NOTARY_ISSUER_ID must be the App Store Connect issuer UUID, without quotes or variable names')
+if not re.fullmatch(r'[A-Za-z0-9]{10}', os.environ['NOTARY_KEY_ID']):
+    raise SystemExit('NOTARY_KEY_ID must be the ten-character Apple API key identifier')
 root = Path(os.environ['RUNNER_TEMP']) / 'windowzones-signing'
 root.mkdir(mode=0o700, exist_ok=True)
 keychain = root / 'signing.keychain-db'
@@ -29,6 +38,15 @@ def run(*args):
             if pattern in output:
                 category = label
                 break
+        if args[:2] == ('xcrun', 'notarytool') and category == 'unclassified error':
+            detail = result.stderr + result.stdout
+            for name in required:
+                value = os.environ.get(name, '')
+                if value:
+                    detail = detail.replace(value, '[redacted]')
+            detail = re.sub(r'-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----', '[redacted key]', detail, flags=re.S)
+            errors = [line for line in detail.splitlines() if line.lower().startswith('error:')]
+            category = ' '.join(errors)[:1000] or category
         raise SystemExit('Signing setup failed: ' + args[0] + ' ' + args[1] + ': ' + category + ' (exit ' + str(result.returncode) + ')')
 
 certificate.write_bytes(base64.b64decode(os.environ['DEVELOPER_ID_P12']))
