@@ -21,12 +21,21 @@ old = subprocess.check_output(['security', 'list-keychains', '-d', 'user'], text
 (root / 'keychains.json').write_text(json.dumps(re.findall(r'"([^"]+)"', old)))
 
 def run(*args):
-    result = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode:
-        raise SystemExit('Signing setup failed: ' + args[0] + ' ' + args[1])
+        output = (result.stdout + result.stderr).lower()
+        category = 'unclassified error'
+        for pattern, label in [('401', 'Apple rejected credentials (HTTP 401)'), ('403', 'Apple denied permission (HTTP 403)'), ('private key', 'Apple API private key could not be loaded'), ('network', 'network failure'), ('timed out', 'request timed out'), ('could not resolve', 'DNS failure')]:
+            if pattern in output:
+                category = label
+                break
+        raise SystemExit('Signing setup failed: ' + args[0] + ' ' + args[1] + ': ' + category + ' (exit ' + str(result.returncode) + ')')
 
 certificate.write_bytes(base64.b64decode(os.environ['DEVELOPER_ID_P12']))
-key.write_bytes(base64.b64decode(os.environ['NOTARY_KEY_P8']))
+key_data = base64.b64decode(os.environ['NOTARY_KEY_P8'])
+if not key_data.strip().startswith(b'-----BEGIN PRIVATE KEY-----'):
+    raise SystemExit('NOTARY_KEY_P8 must contain base64 of the complete Apple .p8 file')
+key.write_bytes(key_data)
 certificate.chmod(0o600)
 key.chmod(0o600)
 run('security', 'create-keychain', '-p', password, str(keychain))

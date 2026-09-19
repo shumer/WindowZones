@@ -93,7 +93,7 @@ import Sparkle
         } else if updater == nil {
             message.stringValue = updaterError ?? "Канал обновлений ещё не настроен для этой сборки."
         } else {
-            message.stringValue = "Обновления проверяются через Sparkle. Установка требует твоего подтверждения."
+            message.stringValue = "Проверка и установка обновлений выполняются через Sparkle."
         }
     }
 
