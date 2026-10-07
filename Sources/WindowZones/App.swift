@@ -158,8 +158,12 @@ import LayoutStorage
     }
 
     private func makeMenu() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "▥"
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let image = NSImage(systemSymbolName: "rectangle.split.2x2", accessibilityDescription: "WindowZones")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 16, weight: .medium))
+        image?.isTemplate = true
+        statusItem.button?.image = image
+        statusItem.button?.imagePosition = .imageOnly
         statusItem.button?.setAccessibilityLabel("WindowZones")
         let menu = NSMenu()
         menu.delegate = self
