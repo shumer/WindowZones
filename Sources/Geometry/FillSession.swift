@@ -17,6 +17,11 @@ public struct FillSession: Sendable {
         if selected.map({ remaining.contains($0) }) != true { selected = remaining.first }
     }
 
+    public static func panelOrigin(size: CGSize, anchor: CGRect, available: CGRect) -> CGPoint {
+        CGPoint(x: max(available.minX, min(anchor.midX - size.width / 2, available.maxX - size.width)),
+                y: max(available.minY, min(anchor.midY - size.height / 2, available.maxY - size.height)))
+    }
+
     public static func accepts(actual: CGRect, target: CGRect) -> Bool {
         [abs(actual.minX - target.minX), abs(actual.minY - target.minY),
          abs(actual.maxX - target.maxX), abs(actual.maxY - target.maxY)].allSatisfy { $0.isFinite && $0 <= 16 }

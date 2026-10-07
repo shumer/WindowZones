@@ -47,3 +47,25 @@ struct FillRefreshTests {
         #expect(FillSession.occupied(zones: [target, below], frames: []) == [])
     }
 }
+
+
+struct FillPresentationTests {
+    @Test func panelUsesFreeHalfOnTargetDisplay() {
+        let area = CGRect(x: 2560, y: 30, width: 2560, height: 1328)
+        let left = CGRect(x: 2568, y: 38, width: 1268, height: 1312)
+        let size = CGSize(width: 720, height: 728)
+        let origin = FillSession.panelOrigin(size: size, anchor: left, available: area)
+        #expect(origin.x == left.midX - 360)
+        #expect(origin.y == left.midY - 364)
+        #expect(area.contains(CGRect(origin: origin, size: size)))
+    }
+
+    @Test func panelClampsToNegativeOriginRetinaDisplay() {
+        let area = CGRect(x: -1512, y: 458, width: 1512, height: 949)
+        let quarter = CGRect(x: -1504, y: 940, width: 744, height: 459)
+        let size = CGSize(width: 720, height: 728)
+        let origin = FillSession.panelOrigin(size: size, anchor: quarter, available: area)
+        #expect(area.contains(CGRect(origin: origin, size: size)))
+        #expect(origin.y == area.maxY - size.height)
+    }
+}

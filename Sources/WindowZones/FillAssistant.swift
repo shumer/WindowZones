@@ -47,6 +47,10 @@ import Geometry
         super.init()
         panel.title = "Заполнить раскладку"
         panel.isReleasedWhenClosed = false
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.moveToActiveSpace]
+        panel.becomesKeyOnlyIfNeeded = false
         panel.delegate = self
         panel.navigate = { [weak self] key in self?.navigate(key) ?? false }
         panel.dismiss = { [weak self] in self?.onClose?() }
@@ -87,15 +91,18 @@ import Geometry
         root.addArrangedSubview(previews)
         panel.contentView = root
         root.widthAnchor.constraint(equalToConstant: 720).isActive = true
-        panel.center()
         drawMap()
     }
 
     var isComplete: Bool { session.selected == nil }
 
     func show() {
-        panel.makeKeyAndOrderFront(nil)
+        // Anchor the assistant to the target display instead of the app's last active screen.
+        let anchor = session.selected.map { zones[$0] } ?? area
+        panel.setFrameOrigin(FillSession.panelOrigin(size: panel.frame.size, anchor: anchor, available: area))
         NSApp.activate()
+        panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
     }
 
     func close() {
