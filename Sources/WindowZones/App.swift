@@ -159,10 +159,7 @@ import LayoutStorage
 
     private func makeMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        let image = NSImage(systemSymbolName: "rectangle.split.2x2", accessibilityDescription: "WindowZones")?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 16, weight: .medium))
-        image?.isTemplate = true
-        statusItem.button?.image = image
+        statusItem.button?.image = MenuBarIcon.make()
         statusItem.button?.imagePosition = .imageOnly
         statusItem.button?.setAccessibilityLabel("WindowZones")
         let menu = NSMenu()
