@@ -1,14 +1,28 @@
-# WindowZones 0.1.0
+# WindowZones 0.2.0 Preview
 
-Ранний тестовый выпуск для Apple silicon. Минимальная версия системы macOS 15; реальные проверки проводились на macOS 26.6.2 и 27.0.
+An early preview for colleagues on Apple silicon, macOS 15 or later. The main local test environment is macOS 27.0.1. The app interface is currently in Russian.
 
-- Размещение окна через верхнюю полоску: потянуть вверх, выбрать зону и отпустить.
-- Четыре встроенные раскладки, панель по Control+Option+Space, альтернативный Shift-drag.
-- Отмена последнего размещения.
-- Базовые настройки, автозапуск по выбору пользователя, проверка и установка обновлений через Sparkle.
+## What's new
 
-Для перемещения окон нужен доступ Accessibility. Приложения могут ограничивать минимальный размер своего окна. Редактор собственных раскладок и Intel в этот выпуск не входят.
+- Five layouts: 50/50 columns, 75/25 columns, thirds, top/bottom halves and four quarters.
+- After placing a window, choose window cards directly inside the next free zone. Skip or press Escape to stop.
+- Minimized windows can appear as cards and are restored only when selected. Screen Recording permission enables optional thumbnails; without it, app icons remain available.
+- Better title-bar recognition for Finder and Slack, more reliable size settling and cross-display rollback.
+- A custom menu bar icon showing a window and its destination zone.
 
-Приложение подписано Developer ID и прошло Apple notarization. Распакуйте ZIP и перенесите WindowZones.app в Applications. При первом запуске разрешите Accessibility в настройках macOS.
+## Install and try
 
-Быстрое начало drag может не распознаваться; пока берите окно за свободную область заголовка. Полная матрица совместимости приложений, мониторов и отмен ещё не закрыта.
+Download WindowZones-0.2.0-arm64.zip, unzip it and place WindowZones.app in Applications. Launch it and enable Accessibility for that copy. Drag a regular window by an empty part of its title bar toward the top of the display, choose a zone and release. Alternatively use Control+Option+Space. Undo is in the WindowZones menu.
+
+This prerelease is a manual download. The stable Sparkle feed remains on 0.1.0 and does not offer this preview automatically. Your existing settings are retained when replacing the app with the same bundle identity.
+
+## Known limitations
+
+- Chrome may not expose a usable Accessibility window. Minimized Telegram windows are not separately verified.
+- Very fast drag starts may be missed. Fullscreen, Spaces, sleep, permission revocation and monitor-disconnect combinations need more testing.
+- Minimum window sizes can prevent an exact fit. Undo after restoring a minimized window restores its geometry but does not minimize it again.
+- Window discovery has a bounded scan time; slow apps may be absent from suggestions.
+- Clean-profile first launch, a real login cycle and the complete update path from 0.1.0 to this preview are not yet verified.
+- No custom layout editor, Intel build or full English localization yet.
+
+Please report the affected app, macOS version, display setup and reproduction steps at https://github.com/shumer/WindowZones/issues. Remove private content from screenshots.

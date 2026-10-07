@@ -7,7 +7,7 @@ Drag a window toward the top of your screen, choose a zone in the layout bar and
 release. Use two windows side by side, make room for a browser and editor, or pick
 another built-in layout without sizing each window by hand.
 
-[Download for macOS](https://github.com/shumer/WindowZones/releases/latest) ·
+[Stable download for macOS](https://github.com/shumer/WindowZones/releases/latest) ·
 [Installation](#install-and-enable) · [First steps](#try-it-in-a-minute) ·
 [Report a problem](https://github.com/shumer/WindowZones/issues)
 
@@ -17,19 +17,31 @@ another built-in layout without sizing each window by hand.
 
 <img src="Resources/AppIcon.iconset/icon_128x128@2x.png" alt="WindowZones app icon showing three window zones" width="128">
 
+## Preview 0.2.0
+
+The next preview adds five layouts: equal columns, 75/25, thirds, top/bottom halves,
+and four quarters. After placing one window, choose another window from cards in
+the next free zone. Skip a zone or press Escape to stop. Minimized windows can be
+restored by choosing their card. Screen Recording permission enables thumbnails;
+without it, cards use app icons. Previews stay in memory.
+
+[Preview releases](https://github.com/shumer/WindowZones/releases) are installed
+manually and are not offered through the stable automatic update feed. The latest
+stable download remains 0.1.0. The custom menu bar icon shows a window and one filled zone.
+
 ## What can I do with it?
 
 | When you want to... | Use |
 | --- | --- |
 | Place a window without opening a separate picker | Drag its title bar toward the top of the screen, then drop onto a zone in the layout bar |
-| Choose from four built-in layouts | Open the picker with **Control+Option+Space** or the menu bar icon |
+| Choose a built-in layout (five in 0.2.0) | Open the picker with **Control+Option+Space** or the menu bar icon |
 | See the current layout across your screen | Hold **Shift** while dragging a window, then release the mouse inside a zone |
 | Reverse the last placement | Choose Undo in the WindowZones menu |
 | Keep the app available after signing in | Enable launch at login in Settings |
 | Get newer versions | Use Check for Updates, or enable automatic update checks |
 
-Each placement affects the window you selected. Other windows stay where you left
-them. WindowZones remembers the selected layout for each display. It does not
+Each placement affects the window you selected. In 0.2.0, the fill assistant offers
+other windows for the remaining zones; it moves them only after you choose a card. WindowZones remembers the selected layout for each display. It does not
 restore a workspace of apps or documents when you sign in.
 
 ## Install and enable
@@ -55,7 +67,7 @@ Release downloads are Developer ID signed and notarized by Apple.
 1. Open a regular Finder window.
 2. Grab a free area of its title bar and drag it toward the top of the screen.
 3. When the layout bar appears, move over a zone and release the mouse.
-4. Repeat with a second window and choose another zone to arrange them side by side.
+4. In 0.2.0, select a window card to fill the remaining zone. In 0.1.0, repeat the drag with a second window.
 5. To reverse the last placement, open the WindowZones menu and choose its Undo command.
 
 Prefer a picker? Activate the window you want to move, press **Control+Option+Space**,
@@ -98,7 +110,7 @@ the current session. Use its own Undo command, not another app's Command-Z. Rest
 WindowZones clears that history. A closed window cannot be restored.
 
 **Can I create my own layouts?** Not yet. Version 0.1 includes four built-in layouts.
-A custom layout editor is planned.
+Version 0.2.0 includes five. A custom layout editor is planned.
 
 **How do I uninstall?** Turn off launch at login if you enabled it, quit WindowZones
 from its menu, then move the app from Applications to Trash. Layout data remains in
@@ -115,6 +127,13 @@ The published app's signature and notarization were verified. A test copy marked
 an older version successfully downloaded, installed and relaunched into 0.1.0 through
 Sparkle. Installation on a clean user profile and a real launch after signing in
 still need verification.
+
+Preview 0.2.0 was primarily checked on macOS 27.0.1. Chrome has previously failed
+to expose a usable Accessibility window. Minimized Telegram windows and the full
+Spaces, sleep and monitor-disconnect matrix are not verified. Some apps enforce a
+minimum window size. Undo restores geometry but does not minimize a restored window
+again. Very fast title-bar drags can still be missed. A clean-profile first launch
+and a real login cycle remain unverified.
 
 When [reporting a problem](https://github.com/shumer/WindowZones/issues), include your
 macOS version, WindowZones version, affected app, monitor setup and steps to reproduce.
