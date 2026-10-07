@@ -43,14 +43,14 @@ struct AccessFailure: Error, Sendable {
 }
 
 actor WindowAccess {
-    private func failure(_ error: AXError) -> AccessFailure {
+    private func failure(_ error: AXError, operation: String) -> AccessFailure {
         let status: String
         switch error {
         case .apiDisabled: status = "denied"
         case .attributeUnsupported, .notImplemented: status = "unsupported"
         default: status = "failed"
         }
-        return AccessFailure(status: status, message: "AX error \(error.rawValue)")
+        return AccessFailure(status: status, message: "\(operation): AX error \(error.rawValue)")
     }
 
     private func prepare(_ element: AXUIElement, until deadline: TimeInterval,
@@ -64,7 +64,7 @@ actor WindowAccess {
         let remaining = deadline - ProcessInfo.processInfo.systemUptime
         guard remaining > 0 else { throw AccessFailure(status: "failed", message: "Истёк бюджет AX") }
         let error = AXUIElementSetMessagingTimeout(element, Float(min(0.25, remaining)))
-        guard error == .success else { throw failure(error) }
+        guard error == .success else { throw failure(error, operation: "set messaging timeout") }
     }
 
     private func read(_ element: AXUIElement, _ name: String, until deadline: TimeInterval,
@@ -72,7 +72,10 @@ actor WindowAccess {
         try prepare(element, until: deadline, cancellation: cancellation)
         var value: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(element, name as CFString, &value)
-        guard error == .success, let value else { throw failure(error) }
+        guard error == .success else { throw failure(error, operation: "read \(name)") }
+        guard let value else {
+            throw AccessFailure(status: "failed", message: "read \(name): пустой результат AX")
+        }
         return value
     }
 
@@ -121,7 +124,7 @@ actor WindowAccess {
             try prepare(window, until: deadline, cancellation: cancellation)
             var settable: DarwinBoolean = false
             let error = AXUIElementIsAttributeSettable(window, attribute as CFString, &settable)
-            guard error == .success else { throw failure(error) }
+            guard error == .success else { throw failure(error, operation: "check settable \(attribute)") }
             guard settable.boolValue else { throw AccessFailure(status: "unsupported", message: "Окно не разрешает изменение position/size") }
         }
     }
@@ -142,7 +145,8 @@ actor WindowAccess {
         try prepare(system, until: deadline, cancellation: cancellation)
         var hit: AXUIElement?
         let error = AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit)
-        guard error == .success, let hit else { throw failure(error) }
+        guard error == .success else { throw failure(error, operation: "hit test") }
+        guard let hit else { throw AccessFailure(status: "failed", message: "hit test: пустой результат AX") }
         let role = try read(hit, kAXRoleAttribute, until: deadline, cancellation: cancellation) as? String
         guard role == "AXTitleBar" || role == kAXWindowRole else {
             throw AccessFailure(status: "unsupported", message: "Начало жеста вне заголовка")
@@ -175,7 +179,7 @@ actor WindowAccess {
         var value = size
         let error = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString,
                                                 AXValueCreate(.cgSize, &value)!)
-        guard error == .success else { throw failure(error) }
+        guard error == .success else { throw failure(error, operation: "write AXSize") }
     }
 
     private func writePosition(_ window: AXUIElement, _ point: CGPoint, until deadline: TimeInterval,
@@ -184,7 +188,7 @@ actor WindowAccess {
         var value = point
         let error = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString,
                                                 AXValueCreate(.cgPoint, &value)!)
-        guard error == .success else { throw failure(error) }
+        guard error == .success else { throw failure(error, operation: "write AXPosition") }
     }
 
     private func settle(_ window: AXUIElement, until deadline: TimeInterval,
@@ -215,8 +219,10 @@ actor WindowAccess {
         var samples: [FrameSample] = []
         var status = "failed"
         var message = ""
+        var stage = "initial validation"
         do {
             try validate(window, until: deadline, cancellation: cancellation)
+            stage = "initial frame"
             let initial = try frame(window, until: deadline, cancellation: cancellation)
             before = initial
             actual = initial
@@ -224,11 +230,13 @@ actor WindowAccess {
             let stagingSize = CGSize(width: min(initial.width, target.width),
                                      height: min(initial.height, target.height))
             if abs(stagingSize.width - initial.width) > 2 || abs(stagingSize.height - initial.height) > 2 {
+                stage = "staging shrink"
                 wrote = true
                 try writeSize(window, stagingSize, until: deadline, cancellation: cancellation)
                 actual = try await settle(window, until: deadline, cancellation: cancellation)
                 samples.append(FrameSample(stage: "after staging shrink", frame: actual!))
             }
+            stage = "target position"
             try validate(window, until: deadline, cancellation: cancellation)
             wrote = true
             try writePosition(window, target.origin, until: deadline, cancellation: cancellation)
@@ -236,6 +244,7 @@ actor WindowAccess {
             samples.append(FrameSample(stage: "after position", frame: actual!))
             if let measured = actual,
                abs(measured.width - target.width) > 2 || abs(measured.height - target.height) > 2 {
+                stage = "size correction"
                 try validate(window, until: deadline, cancellation: cancellation)
                 try writeSize(window, target.size, until: deadline, cancellation: cancellation)
                 actual = try await settle(window, until: deadline, cancellation: cancellation)
@@ -247,6 +256,7 @@ actor WindowAccess {
                 let corrected = visibleArea.map { GeometryEngine.keepVisible(requested, in: $0) } ?? requested
                 if !GeometryEngine.close(measured, corrected),
                    deadline - ProcessInfo.processInfo.systemUptime >= 0.25 {
+                    stage = "final position correction"
                     try validate(window, until: deadline, cancellation: cancellation)
                     try writePosition(window, corrected.origin, until: deadline, cancellation: cancellation)
                     actual = try await settle(window, until: deadline, cancellation: cancellation)
@@ -258,6 +268,7 @@ actor WindowAccess {
             if let positioned = actual,
                abs(positioned.width - target.width) > 2 || abs(positioned.height - target.height) > 2,
                deadline - ProcessInfo.processInfo.systemUptime >= 0.5 {
+                stage = "settled size retry"
                 try validate(window, until: deadline, cancellation: cancellation)
                 try writeSize(window, target.size, until: deadline, cancellation: cancellation)
                 actual = try await settle(window, until: deadline, cancellation: cancellation)
@@ -267,6 +278,7 @@ actor WindowAccess {
                     let corrected = visibleArea.map { GeometryEngine.keepVisible(requested, in: $0) } ?? requested
                     if !GeometryEngine.close(resized, corrected),
                        deadline - ProcessInfo.processInfo.systemUptime >= 0.25 {
+                        stage = "retry position correction"
                         try validate(window, until: deadline, cancellation: cancellation)
                         try writePosition(window, corrected.origin, until: deadline, cancellation: cancellation)
                         actual = try await settle(window, until: deadline, cancellation: cancellation)
@@ -288,17 +300,52 @@ actor WindowAccess {
         } catch {
             let issue = error as? AccessFailure
             status = issue?.status ?? "failed"
-            message = issue?.message ?? "Ошибка AX"
+            message = "\(stage): \(issue?.message ?? "Ошибка AX")"
+            // Samples retain earlier measurements, but a failed write may have changed the frame.
+            actual = nil
             if wrote, !cancellation.cancelled, let before {
                 do {
-                    try validate(window, until: start + 2, cancellation: cancellation)
-                    try writeSize(window, before.size, until: start + 2, cancellation: cancellation)
-                    _ = try await settle(window, until: start + 2, cancellation: cancellation)
-                    try writePosition(window, before.origin, until: start + 2, cancellation: cancellation)
-                    actual = try await settle(window, until: start + 2, cancellation: cancellation)
+                    let recoveryDeadline = start + 2
+                    stage = "rollback validation"
+                    try validate(window, until: recoveryDeadline, cancellation: cancellation)
+                    stage = "rollback frame"
+                    var recovered = try frame(window, until: recoveryDeadline, cancellation: cancellation)
+                    // Shrink before returning across displays, but enlarge only at the original origin.
+                    let stagingSize = CGSize(width: min(recovered.width, before.width),
+                                             height: min(recovered.height, before.height))
+                    if abs(stagingSize.width - recovered.width) > 2 || abs(stagingSize.height - recovered.height) > 2 {
+                        stage = "rollback staging shrink"
+                        try writeSize(window, stagingSize, until: recoveryDeadline, cancellation: cancellation)
+                        recovered = try await settle(window, until: recoveryDeadline, cancellation: cancellation)
+                        samples.append(FrameSample(stage: "after rollback staging shrink", frame: recovered))
+                    }
+                    if abs(recovered.minX - before.minX) > 2 || abs(recovered.minY - before.minY) > 2 {
+                        stage = "rollback position"
+                        try validate(window, until: recoveryDeadline, cancellation: cancellation)
+                        try writePosition(window, before.origin, until: recoveryDeadline, cancellation: cancellation)
+                        recovered = try await settle(window, until: recoveryDeadline, cancellation: cancellation)
+                        samples.append(FrameSample(stage: "after rollback position", frame: recovered))
+                    }
+                    if abs(recovered.width - before.width) > 2 || abs(recovered.height - before.height) > 2 {
+                        stage = "rollback size"
+                        try validate(window, until: recoveryDeadline, cancellation: cancellation)
+                        try writeSize(window, before.size, until: recoveryDeadline, cancellation: cancellation)
+                        recovered = try await settle(window, until: recoveryDeadline, cancellation: cancellation)
+                        samples.append(FrameSample(stage: "after rollback size", frame: recovered))
+                    }
+                    if (abs(recovered.minX - before.minX) > 2 || abs(recovered.minY - before.minY) > 2),
+                       recoveryDeadline - ProcessInfo.processInfo.systemUptime >= 0.25 {
+                        stage = "rollback final position"
+                        try validate(window, until: recoveryDeadline, cancellation: cancellation)
+                        try writePosition(window, before.origin, until: recoveryDeadline, cancellation: cancellation)
+                        recovered = try await settle(window, until: recoveryDeadline, cancellation: cancellation)
+                        samples.append(FrameSample(stage: "after rollback final position", frame: recovered))
+                    }
+                    actual = recovered
                     message += GeometryEngine.close(actual!, before) ? "; исходный frame восстановлен" : "; восстановление скорректировано приложением"
                 } catch {
-                    message += "; восстановление не подтверждено"
+                    let rollbackIssue = error as? AccessFailure
+                    message += "; восстановление не подтверждено (\(stage): \(rollbackIssue?.message ?? "операция прервана"))"
                 }
             }
         }
