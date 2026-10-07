@@ -7,6 +7,10 @@ import Geometry
 }
 
 @MainActor final class FillPanel: NSPanel {
+    var navigate: ((UInt16) -> Bool)?
+    override func keyDown(with event: NSEvent) {
+        if navigate?(event.keyCode) != true { super.keyDown(with: event) }
+    }
     var dismiss: (() -> Void)?
     override func cancelOperation(_ sender: Any?) { dismiss?() }
 }
@@ -24,6 +28,9 @@ import Geometry
     private var candidates: [FillCandidate] = []
     private var buttons: [UUID: NSButton] = [:]
     private var imageTask: Task<Void, Never>?
+    private(set) var isBusy = false
+    private var failureMessage: String?
+    private var focusedID: UUID?
     private var controls: [NSControl] = []
     var onChoose: ((FillCandidate, Int) -> Void)?
     var onClose: (() -> Void)?
@@ -35,12 +42,13 @@ import Geometry
         self.area = area
         self.occupied = occupied
         session = FillSession(count: zones.count, occupied: occupied)
-        panel = FillPanel(contentRect: CGRect(x: 0, y: 0, width: 720, height: 580),
+        panel = FillPanel(contentRect: CGRect(x: 0, y: 0, width: 720, height: 700),
                           styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init()
         panel.title = "Заполнить раскладку"
         panel.isReleasedWhenClosed = false
         panel.delegate = self
+        panel.navigate = { [weak self] key in self?.navigate(key) ?? false }
         panel.dismiss = { [weak self] in self?.onClose?() }
         root.orientation = .vertical
         root.alignment = .leading
@@ -57,7 +65,7 @@ import Geometry
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.widthAnchor.constraint(equalToConstant: 672).isActive = true
-        scroll.heightAnchor.constraint(equalToConstant: 260).isActive = true
+        scroll.heightAnchor.constraint(equalToConstant: min(360, max(180, area.height - 360))).isActive = true
         list.orientation = .vertical
         list.alignment = .leading
         list.spacing = 8
@@ -100,20 +108,34 @@ import Geometry
     }
 
     func setBusy(_ busy: Bool) {
+        isBusy = busy
         controls.forEach { $0.isEnabled = !busy }
         buttons.values.forEach { $0.isEnabled = !busy }
         map.subviews.compactMap { $0 as? NSButton }.forEach { $0.isEnabled = !busy && session.remaining.contains($0.tag) }
     }
 
-    func update(_ candidates: [FillCandidate]) {
+    func reconcile(occupied: Set<Int>) {
+        guard self.occupied != occupied else { return }
+        self.occupied = occupied
+        session.reconcile(occupied: occupied)
+        drawMap()
+        if isComplete { onClose?() }
+    }
+
+    func update(_ candidates: [FillCandidate], force: Bool = false) {
+        let unchanged = self.candidates.count == candidates.count && zip(self.candidates, candidates).allSatisfy {
+            $0.id == $1.id && $0.title == $1.title && $0.snapshot.frame == $1.snapshot.frame
+        }
+        guard force || !unchanged else { return }
+        let focused = buttons.first { $0.value === panel.firstResponder }?.key ?? focusedID
         imageTask?.cancel()
         self.candidates = candidates
         buttons = [:]
         list.arrangedSubviews.forEach { list.removeArrangedSubview($0); $0.removeFromSuperview() }
-        for start in stride(from: 0, to: candidates.count, by: 3) {
+        for start in stride(from: 0, to: candidates.count, by: 2) {
             let row = NSStackView()
             row.spacing = 8
-            for candidate in candidates[start..<min(start + 3, candidates.count)] {
+            for candidate in candidates[start..<min(start + 2, candidates.count)] {
                 let app = NSRunningApplication(processIdentifier: candidate.snapshot.pid)
                 let label = candidate.title.isEmpty ? (app?.localizedName ?? "Окно") : "\(app?.localizedName ?? "Приложение")\n\(candidate.title)"
                 let button = NSButton(title: label, target: self, action: #selector(choose(_:)))
@@ -123,33 +145,36 @@ import Geometry
                 button.imageScaling = .scaleProportionallyDown
                 button.lineBreakMode = .byTruncatingTail
                 button.setAccessibilityLabel(label)
-                button.widthAnchor.constraint(equalToConstant: 216).isActive = true
-                button.heightAnchor.constraint(equalToConstant: 116).isActive = true
+                button.widthAnchor.constraint(equalToConstant: 328).isActive = true
+                button.heightAnchor.constraint(equalToConstant: 172).isActive = true
                 buttons[candidate.id] = button
                 row.addArrangedSubview(button)
             }
             list.addArrangedSubview(row)
         }
+        if let focused, let button = buttons[focused] { panel.makeFirstResponder(button) }
         updateStatus()
         loadPreviews()
     }
 
-    func placed(_ id: UUID) {
+    func placed(_ id: UUID, blocked: Set<Int>) {
         candidates.removeAll { $0.id == id }
-        if let index = session.selected { occupied.insert(index) }
-        session.advance()
+        occupied.formUnion(blocked)
+        session.reconcile(occupied: occupied)
         if isComplete { onClose?(); return }
         drawMap()
-        update(candidates)
+        update(candidates, force: true)
     }
 
     func failed() {
         setBusy(false)
-        status.stringValue = "Окно не удалось точно разместить. Можно отменить через Undo или выбрать другое."
+        failureMessage = "Окно не помещается точно или недоступно. Undo вернёт последнее размещение. Выбери другое окно."
+        updateStatus()
     }
 
     private func updateStatus() {
-        status.stringValue = candidates.isEmpty ? "Нет доступных окон на этом экране. Открой окно и нажми «Обновить»." : "Зона \((session.selected ?? 0) + 1) · Осталось \(session.remaining.count). Escape завершает выбор."
+        if let failureMessage { status.stringValue = failureMessage; return }
+        status.stringValue = candidates.isEmpty ? "Нет доступных окон на этом экране. Открой окно, список обновится автоматически." : "Зона \((session.selected ?? 0) + 1) · Осталось \(session.remaining.count). ✓ занято или перекрыто. Escape завершает выбор."
     }
 
     private func drawMap() {
@@ -163,6 +188,11 @@ import Geometry
                                   y: (zone.minY - area.minY) * scale,
                                   width: max(20, zone.width * scale - 3), height: max(20, zone.height * scale - 3))
             button.bezelStyle = .regularSquare
+            button.wantsLayer = true
+            button.layer?.cornerRadius = 8
+            button.layer?.borderWidth = session.selected == index ? 3 : 0
+            button.layer?.borderColor = NSColor.controlAccentColor.cgColor
+            button.layer?.backgroundColor = session.selected == index ? NSColor.controlAccentColor.withAlphaComponent(0.18).cgColor : NSColor.clear.cgColor
             button.contentTintColor = session.selected == index ? .controlAccentColor : .secondaryLabelColor
             button.isEnabled = session.remaining.contains(index)
             button.setAccessibilityLabel("Зона \(index + 1)\(session.selected == index ? ", выбрана" : "")")
@@ -171,9 +201,35 @@ import Geometry
         updateStatus()
     }
 
-    @objc private func selectZone(_ sender: NSButton) { session.select(sender.tag); drawMap() }
+    private func navigate(_ key: UInt16) -> Bool {
+        guard !isBusy, !candidates.isEmpty else { return false }
+        let current = buttons.first { $0.value === panel.firstResponder }?.key ?? focusedID
+        let index = candidates.firstIndex { $0.id == current } ?? 0
+        if key == 36 || key == 49 {
+            if let button = buttons[candidates[index].id] { choose(button) }
+            return true
+        }
+        let delta: Int
+        switch key {
+        case 123: delta = -1
+        case 124: delta = 1
+        case 125: delta = 2
+        case 126: delta = -2
+        default: return false
+        }
+        let next = min(candidates.count - 1, max(0, index + delta))
+        focusedID = candidates[next].id
+        if let button = buttons[candidates[next].id] {
+            panel.makeFirstResponder(button)
+            button.scrollToVisible(button.bounds)
+        }
+        return true
+    }
+
+    @objc private func selectZone(_ sender: NSButton) { failureMessage = nil; session.select(sender.tag); drawMap() }
     @objc private func choose(_ sender: NSButton) {
         guard let index = session.selected, let candidate = candidates.first(where: { $0.id.uuidString == sender.identifier?.rawValue }) else { return }
+        failureMessage = nil
         setBusy(true)
         onChoose?(candidate, index)
     }
@@ -209,7 +265,7 @@ import Geometry
                 configuration.showsCursor = false
                 guard let image = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: configuration),
                       !Task.isCancelled else { continue }
-                self?.buttons[candidate.id]?.image = NSImage(cgImage: image, size: NSSize(width: 160, height: 80))
+                self?.buttons[candidate.id]?.image = NSImage(cgImage: image, size: NSSize(width: 280, height: 280 * CGFloat(image.height) / CGFloat(image.width)))
             }
         }
     }

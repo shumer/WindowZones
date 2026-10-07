@@ -21,3 +21,29 @@ struct FillSessionTests {
         #expect(FillSession(count: -1, occupied: []).remaining.isEmpty)
     }
 }
+
+import Foundation
+
+struct FillRefreshTests {
+    @Test func refreshPreservesSelectionAndSkipButReopensVacatedZone() {
+        var session = FillSession(count: 4, occupied: [0])
+        session.select(2)
+        session.advance()
+        session.select(3)
+        session.reconcile(occupied: [1])
+        #expect(session.remaining == [0, 3])
+        #expect(session.selected == 3)
+        session.reconcile(occupied: [1, 3])
+        #expect(session.selected == 0)
+    }
+
+    @Test func roundedWindowReservesIntrudedNeighbour() {
+        let target = CGRect(x: 8, y: 38, width: 1268, height: 652)
+        let actual = CGRect(x: 8, y: 38, width: 1267, height: 662)
+        let below = CGRect(x: 8, y: 698, width: 1268, height: 652)
+        #expect(FillSession.accepts(actual: actual, target: target))
+        #expect(FillSession.occupied(zones: [target, below], frames: [actual]) == [0, 1])
+        #expect(!FillSession.accepts(actual: actual.insetBy(dx: -50, dy: 0), target: target))
+        #expect(FillSession.occupied(zones: [target, below], frames: []) == [])
+    }
+}

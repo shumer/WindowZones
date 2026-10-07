@@ -202,7 +202,13 @@ actor WindowAccess {
         return WindowSnapshot(reference: WindowReference(window), frame: initial, pid: pid)
     }
 
-    func fillCandidates(pids: [pid_t], area: CGRect, excluding: [WindowSnapshot],
+    func unusedCandidateIDs(_ candidates: [FillCandidate], excluding: [WindowSnapshot]) -> Set<UUID> {
+        Set(candidates.filter { candidate in
+            !excluding.contains { CFEqual($0.reference.element, candidate.snapshot.reference.element) }
+        }.map(\.id))
+    }
+
+    func fillCandidates(pids: [pid_t], area: CGRect, excluding: [WindowSnapshot], previous: [FillCandidate] = [],
                         cancellation: Cancellation) async -> [FillCandidate] {
         var result: [FillCandidate] = []
         let deadline = ProcessInfo.processInfo.systemUptime + 3
@@ -212,17 +218,18 @@ actor WindowAccess {
             let appDeadline = min(deadline, ProcessInfo.processInfo.systemUptime + 0.3)
             guard let windows = try? read(app, kAXWindowsAttribute, until: appDeadline, cancellation: cancellation) as? [AXUIElement] else { continue }
             for window in windows.prefix(20) {
-                guard !cancellation.cancelled, ProcessInfo.processInfo.systemUptime < appDeadline else { break }
+                guard !cancellation.cancelled, ProcessInfo.processInfo.systemUptime < deadline else { break }
                 if excluding.contains(where: { CFEqual($0.reference.element, window) }) { continue }
                 if result.contains(where: { CFEqual($0.snapshot.reference.element, window) }) { continue }
+                let windowDeadline = min(deadline, ProcessInfo.processInfo.systemUptime + 0.3)
                 do {
-                    try validate(window, until: appDeadline, cancellation: cancellation)
-                    let rect = try frame(window, until: appDeadline, cancellation: cancellation)
+                    try validate(window, until: windowDeadline, cancellation: cancellation)
+                    let rect = try frame(window, until: windowDeadline, cancellation: cancellation)
                     let intersection = rect.intersection(area)
                     guard !intersection.isNull, intersection.width * intersection.height > 0 else { continue }
                     // Titles are transient UI labels and are never included in diagnostics.
-                    let title = (try? read(window, kAXTitleAttribute, until: appDeadline, cancellation: cancellation)) as? String ?? ""
-                    result.append(FillCandidate(id: UUID(), snapshot: WindowSnapshot(reference: WindowReference(window), frame: rect, pid: pid),
+                    let title = (try? read(window, kAXTitleAttribute, until: windowDeadline, cancellation: cancellation)) as? String ?? ""
+                    result.append(FillCandidate(id: previous.first(where: { CFEqual($0.snapshot.reference.element, window) })?.id ?? UUID(), snapshot: WindowSnapshot(reference: WindowReference(window), frame: rect, pid: pid),
                                                 title: String(title.prefix(160))))
                 } catch { continue }
             }

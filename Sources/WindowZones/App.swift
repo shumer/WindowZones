@@ -48,6 +48,9 @@ import LayoutStorage
     private var fillDisplays: [Display] = []
     private var fillUsed: [WindowSnapshot] = []
     private var fillLoadingID = UUID()
+    private var fillRefreshTask: Task<Void, Never>?
+    private var fillRefreshing = false
+    private var fillPrevious: [FillCandidate] = []
     private var dragEnabled = true
     private let dragBar = DragBar()
     private var dragBarInteraction = DragBarInteraction()
@@ -518,7 +521,7 @@ import LayoutStorage
         perform(snapshot, target: display.ax(zones[index]), display: display, isUndo: false, layoutID: layoutID, displayKey: displayKey)
     }
 
-    private func perform(_ snapshot: WindowSnapshot, target: CGRect, display: Display, isUndo: Bool, layoutID: UUID? = nil, displayKey: String? = nil, completion: ((Bool) -> Void)? = nil) {
+    private func perform(_ snapshot: WindowSnapshot, target: CGRect, display: Display, isUndo: Bool, layoutID: UUID? = nil, displayKey: String? = nil, completion: ((CGRect?) -> Void)? = nil) {
         guard !busy else { return }
         busy = true
         operationDisplays = Display.connected()
@@ -557,9 +560,9 @@ import LayoutStorage
             let appID = NSRunningApplication(processIdentifier: snapshot.pid)?.bundleIdentifier ?? "unavailable"
             report(result, context: "\(isUndo ? "Undo" : "Snap") [\(appID)]")
             busy = false
-            if let completion { completion(result.succeeded && result.actual.map { GeometryEngine.close($0, target) } == true) }
+            if let completion { completion(result.succeeded && result.actual.map { FillSession.accepts(actual: $0, target: target) } == true ? result.actual : nil) }
             else if !isUndo, result.succeeded, let actual = result.actual,
-                    GeometryEngine.close(actual, target) {
+                    FillSession.accepts(actual: actual, target: target) {
                 let layout = layoutID.flatMap { id in library.layouts.first { $0.id == id } } ?? activeLayout(for: display)
                 beginFillAssistant(layout: layout, display: display, target: target, placed: snapshot)
             }
@@ -568,6 +571,9 @@ import LayoutStorage
 
     private func closeFillAssistant() {
         guard fillToken != nil else { return }
+        fillRefreshTask?.cancel()
+        fillRefreshTask = nil
+        fillPrevious = []
         fillToken?.cancel()
         fillToken = nil
         fillLoadingID = UUID()
@@ -587,9 +593,20 @@ import LayoutStorage
         fillDisplays = Display.connected()
         fillUsed = [placed]
         loadFillCandidates(layout: layout, display: display, initialIndex: index, token: token)
+        fillRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled, let self, self.fillToken === token else { return }
+                if !self.busy && self.fillAssistant?.isBusy != true {
+                    self.loadFillCandidates(layout: layout, display: display, initialIndex: index, token: token)
+                }
+            }
+        }
     }
 
     private func loadFillCandidates(layout: Layout, display: Display, initialIndex: Int, token: Cancellation) {
+        guard !fillRefreshing, !busy, fillAssistant?.isBusy != true else { return }
+        fillRefreshing = true
         let request = UUID()
         fillLoadingID = request
         let apps = NSWorkspace.shared.runningApplications.filter {
@@ -598,7 +615,9 @@ import LayoutStorage
         let pids = apps.map(\.processIdentifier)
         let used = fillUsed
         Task {
-            let candidates = await access.fillCandidates(pids: pids, area: display.axVisible, excluding: used, cancellation: token)
+            defer { fillRefreshing = false }
+            let candidates = await access.fillCandidates(pids: pids, area: display.axVisible, excluding: [], previous: fillPrevious, cancellation: token)
+            let unusedIDs = await access.unusedCandidateIDs(candidates, excluding: used)
             guard !token.cancelled, fillToken === token, fillLoadingID == request,
                   Display.compatible(fillDisplays, Display.connected()) else { return }
             let zones = resolvedZones(layout, on: display)
@@ -613,8 +632,17 @@ import LayoutStorage
                     return GeometryEngine.close(rect, candidate.snapshot.frame)
                 }
             }
+            let knownIDs = Set(fillPrevious.map(\.id))
+            fillPrevious.append(contentsOf: candidates.filter { !knownIDs.contains($0.id) })
+            let wasOpen = fillAssistant != nil
+            let placedFrames = available.filter { !unusedIDs.contains($0.id) }.map { $0.snapshot.frame }
+            var occupied = FillSession.occupied(zones: zones.map { display.ax($0) }, frames: placedFrames)
+            let alignedFrames = available.filter { candidate in
+                zones.contains { FillSession.accepts(actual: candidate.snapshot.frame, target: display.ax($0)) }
+            }.map { $0.snapshot.frame }
+            occupied.formUnion(FillSession.occupied(zones: zones.map { display.ax($0) }, frames: alignedFrames))
             if fillAssistant == nil {
-                var occupied: Set<Int> = [initialIndex]
+                occupied.insert(initialIndex)
                 for candidate in available {
                     for (index, zone) in zones.enumerated() where GeometryEngine.close(candidate.snapshot.frame, display.ax(zone)) {
                         occupied.insert(index)
@@ -644,11 +672,11 @@ import LayoutStorage
                             let frame = try await self.access.currentFrame(candidate.snapshot, cancellation: token)
                             guard !token.cancelled, self.fillToken === token else { return }
                             let snapshot = WindowSnapshot(reference: candidate.snapshot.reference, frame: frame, pid: candidate.snapshot.pid)
-                            self.perform(snapshot, target: display.ax(zones[index]), display: display, isUndo: false) { [weak self, weak panel] succeeded in
+                            self.perform(snapshot, target: display.ax(zones[index]), display: display, isUndo: false) { [weak self, weak panel] actual in
                                 guard let self, !token.cancelled, self.fillToken === token else { return }
-                                if succeeded {
+                                if let actual {
                                     self.fillUsed.append(snapshot)
-                                    panel?.placed(candidate.id)
+                                    panel?.placed(candidate.id, blocked: FillSession.occupied(zones: zones.map { display.ax($0) }, frames: [actual]))
                                 } else { panel?.failed() }
                                 if self.fillToken === token { panel?.setBusy(false); panel?.show() }
                             }
@@ -661,10 +689,11 @@ import LayoutStorage
                 }
             }
             let occupiedWindows = available.filter { candidate in
-                !zones.contains { GeometryEngine.close(candidate.snapshot.frame, display.ax($0)) }
+                unusedIDs.contains(candidate.id) && !zones.contains { FillSession.accepts(actual: candidate.snapshot.frame, target: display.ax($0)) }
             }
+            fillAssistant?.reconcile(occupied: occupied)
             fillAssistant?.update(occupiedWindows)
-            fillAssistant?.show()
+            if !wasOpen { fillAssistant?.show() }
         }
     }
 
