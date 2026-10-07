@@ -17,7 +17,12 @@ another built-in layout without sizing each window by hand.
 
 <img src="Resources/AppIcon.iconset/icon_128x128@2x.png" alt="WindowZones app icon showing three window zones" width="128">
 
-## New in 0.2.0
+## New in 0.2.1
+
+Dragging Firefox and Vivaldi by empty space beside their tabs now opens the layout
+bar. Actual tabs, buttons and input fields remain excluded.
+
+## Introduced in 0.2.0
 
 Version 0.2.0 adds five layouts: equal columns, 75/25, thirds, top/bottom halves,
 and four quarters. After placing one window, choose another window from cards in
@@ -25,7 +30,7 @@ the next free zone. Skip a zone or press Escape to stop. Minimized windows can b
 restored by choosing their card. Screen Recording permission enables thumbnails;
 without it, cards use app icons. Previews stay in memory.
 
-[Download 0.2.0](https://github.com/shumer/WindowZones/releases/tag/v0.2.0) or use
+[Download 0.2.1](https://github.com/shumer/WindowZones/releases/tag/v0.2.1) or use
 Check for Updates in the app. This is an early release with known limitations. The custom menu bar icon shows a window and one filled zone.
 
 ## What can I do with it?
