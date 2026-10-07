@@ -129,3 +129,24 @@ The working project documentation is currently in Russian.
 - [Next steps](docs/NextSteps.md) and [task list](docs/tasks/README.md).
 - [Product specification](docs/Specification.md) and [drag interaction design](docs/design/DragFlow.md).
 - [Repository rules](AGENTS.md).
+
+### Install a local development build
+
+With WindowZones already in `/Applications`, run:
+
+```sh
+./scripts/install.sh
+```
+
+The script runs tests, builds, signs with the project's Developer ID and replaces
+only `/Applications/WindowZones.app`. The first installation is manual. Local builds
+require the signing identity for team `MW9955TT6R` in your Keychain and App Management
+permission for the app running the script. Do not substitute an ad-hoc signature:
+macOS privacy permissions depend on the app's signing identity. Keeping the same
+identity is necessary to preserve Accessibility access, which must still be verified
+after installation.
+
+Use `SKIP_TESTS=1 ./scripts/install.sh` after tests have already passed for your changes.
+Pass `--diagnostics` to open the diagnostic window on launch. The previous installed
+bundle is saved at `.build/install-backup/WindowZones.app`. These are local development
+builds, not new notarized public releases.
