@@ -135,7 +135,8 @@ actor WindowAccess {
                               frame: try frame(window, until: deadline, cancellation: cancellation), pid: pid)
     }
 
-    func captureDrag(at point: CGPoint, cancellation: Cancellation) throws -> WindowSnapshot {
+    // The caller must freeze this candidate before validating its window capabilities.
+    func captureDragCandidate(at point: CGPoint, cancellation: Cancellation) throws -> WindowSnapshot {
         let deadline = ProcessInfo.processInfo.systemUptime + 0.25
         let system = AXUIElementCreateSystemWide()
         try prepare(system, until: deadline, cancellation: cancellation)
@@ -155,8 +156,12 @@ actor WindowAccess {
         let initial = try frame(window, until: deadline, cancellation: cancellation)
         let strip = CGRect(x: initial.minX + 16, y: initial.minY + 5, width: initial.width - 32, height: 27)
         guard strip.contains(point) else { throw AccessFailure(status: "unsupported", message: "Неоднозначная область переноса") }
-        try validate(window, until: deadline, cancellation: cancellation)
         return WindowSnapshot(reference: WindowReference(window), frame: initial, pid: pid)
+    }
+
+    func validateDragCandidate(_ snapshot: WindowSnapshot, cancellation: Cancellation) throws {
+        try validate(snapshot.reference.element, until: ProcessInfo.processInfo.systemUptime + 0.25,
+                     cancellation: cancellation)
     }
 
     func currentFrame(_ snapshot: WindowSnapshot, cancellation: Cancellation) throws -> CGRect {
@@ -202,7 +207,7 @@ actor WindowAccess {
 
     func place(_ snapshot: WindowSnapshot, at target: CGRect, visibleArea: CGRect?, cancellation: Cancellation) async -> PlacementResult {
         let start = ProcessInfo.processInfo.systemUptime
-        let deadline = start + 0.9
+        let deadline = start + 1.4
         let window = snapshot.reference.element
         var before: CGRect?
         var actual: CGRect?
@@ -248,6 +253,27 @@ actor WindowAccess {
                     samples.append(FrameSample(stage: "after final position correction", frame: actual!))
                 }
             }
+            // An animated resize or display transition may leave a transient size adjustment.
+            // Retry once at the settled origin without looping on app size constraints.
+            if let positioned = actual,
+               abs(positioned.width - target.width) > 2 || abs(positioned.height - target.height) > 2,
+               deadline - ProcessInfo.processInfo.systemUptime >= 0.5 {
+                try validate(window, until: deadline, cancellation: cancellation)
+                try writeSize(window, target.size, until: deadline, cancellation: cancellation)
+                actual = try await settle(window, until: deadline, cancellation: cancellation)
+                samples.append(FrameSample(stage: "after settled size retry", frame: actual!))
+                if let resized = actual {
+                    let requested = CGRect(origin: target.origin, size: resized.size)
+                    let corrected = visibleArea.map { GeometryEngine.keepVisible(requested, in: $0) } ?? requested
+                    if !GeometryEngine.close(resized, corrected),
+                       deadline - ProcessInfo.processInfo.systemUptime >= 0.25 {
+                        try validate(window, until: deadline, cancellation: cancellation)
+                        try writePosition(window, corrected.origin, until: deadline, cancellation: cancellation)
+                        actual = try await settle(window, until: deadline, cancellation: cancellation)
+                        samples.append(FrameSample(stage: "after retry position correction", frame: actual!))
+                    }
+                }
+            }
             guard let actual else { throw AccessFailure(status: "failed", message: "Нет read-back") }
             if GeometryEngine.close(actual, target) {
                 status = "exact"
@@ -265,11 +291,11 @@ actor WindowAccess {
             message = issue?.message ?? "Ошибка AX"
             if wrote, !cancellation.cancelled, let before {
                 do {
-                    try validate(window, until: start + 1.5, cancellation: cancellation)
-                    try writeSize(window, before.size, until: start + 1.5, cancellation: cancellation)
-                    _ = try await settle(window, until: start + 1.5, cancellation: cancellation)
-                    try writePosition(window, before.origin, until: start + 1.5, cancellation: cancellation)
-                    actual = try await settle(window, until: start + 1.5, cancellation: cancellation)
+                    try validate(window, until: start + 2, cancellation: cancellation)
+                    try writeSize(window, before.size, until: start + 2, cancellation: cancellation)
+                    _ = try await settle(window, until: start + 2, cancellation: cancellation)
+                    try writePosition(window, before.origin, until: start + 2, cancellation: cancellation)
+                    actual = try await settle(window, until: start + 2, cancellation: cancellation)
                     message += GeometryEngine.close(actual!, before) ? "; исходный frame восстановлен" : "; восстановление скорректировано приложением"
                 } catch {
                     message += "; восстановление не подтверждено"

@@ -68,9 +68,15 @@ import LayoutStorage
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(targetApplicationTerminated), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
         record("Запуск: чужие окна не изменялись. Перетаскивание вверх и Shift-drag включены.")
         if !AXIsProcessTrusted() { settings.show() }
+        if CommandLine.arguments.contains("--diagnostics") { showDiagnostics() }
         if CommandLine.arguments.contains("--smoke") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { NSApp.terminate(nil) }
         }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { settings.show() }
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -600,10 +606,17 @@ import LayoutStorage
             dragHadShift = event.modifierFlags.contains(.shift)
             Task { [self] in
                 do {
-                    let snapshot = try await access.captureDrag(at: point, cancellation: token)
+                    let snapshot = try await access.captureDragCandidate(at: point, cancellation: token)
                     guard !token.cancelled, dragToken === token, let now = axPointer(),
                           let targetApp = NSRunningApplication(processIdentifier: snapshot.pid), !targetApp.isTerminated,
                           hypot(now.x - point.x, now.y - point.y) <= 3 else {
+                        if dragToken === token { cancelDrag() }
+                        return
+                    }
+                    // The baseline is now frozen; movement during capability checks is valid drag evidence.
+                    try await access.validateDragCandidate(snapshot, cancellation: token)
+                    guard !token.cancelled, dragToken === token,
+                          NSEvent.pressedMouseButtons & 1 != 0 else {
                         if dragToken === token { cancelDrag() }
                         return
                     }
@@ -611,6 +624,7 @@ import LayoutStorage
                     dragTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                         Task { @MainActor in self?.checkDrag() }
                     }
+                    checkDrag()
                 } catch {
                     if dragToken === token { cancelDrag() }
                 }
