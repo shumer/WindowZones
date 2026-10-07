@@ -332,6 +332,7 @@ import LayoutStorage
                 guard !token.cancelled else { return }
                 if fromDiagnostics {
                     // Match shortcut capture by activating the explicitly selected application first.
+                    NSApp.yieldActivation(to: app)
                     app.activate(from: .current, options: [])
                     try await Task.sleep(for: .milliseconds(150))
                     guard !token.cancelled else { return }

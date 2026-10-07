@@ -82,3 +82,10 @@ Mac разблокирован, Accessibility подтверждён. Finder/Sla
 ### 2026-10-07: mixed scale с новым ожиданием
 
 На Lifecycle Probe переносы Main -> Retina и обратно, а также Undo полностью exact (828/830 и 563/554 ms). Контролируемая ошибка на отметке 1400 ms после увеличения на Main восстановила исходный frame Retina за 1955 ms вместе с операцией. Запас до общего бюджета 2 s только 45 ms. Это два шага rollback; медленный AX и три шага восстановления этой проверкой не покрыты. Полные frames и условия в Stage0Results.md. Далее физический drag и оставшаяся lifecycle-матрица, этап 03 открыт.
+
+
+### Итог прохода 2026-10-07
+
+Исправлена диагностическая передача фокуса: yieldActivation перед activate(from:), согласно SDK 27.0. Safari 27.0.1 после правки прошёл 10 snap/Undo, все 20 exact. Fullscreen fixture отменяет picker без Snap. Пользователь подтвердил верхнюю полоску, Undo, Escape и отпускание Shift; остальную ручную матрицу оценил положительно без точного числа повторов. 49 тестов, release и подписанная установка прошли.
+
+Chrome остаётся unsupported: FocusedWindow noValue, MainWindow unavailable, AXWindows count 1. Finder picker для обычного окна открыт, но новая серия остановлена timeout инструмента и не засчитана. Сводка и границы приёмки: [Stage0Acceptance.md](Stage0Acceptance.md). Не повторять Safari и fixture серии без изменения соответствующего кода. Полный этап 03 пока открыт.

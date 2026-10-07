@@ -14,7 +14,8 @@ import AppKit
         let stack = NSStackView(views: [
             status,
             NSButton(title: "Close in 8 seconds", target: self, action: #selector(closeLater)),
-            NSButton(title: "Minimize in 8 seconds", target: self, action: #selector(minimizeLater))
+            NSButton(title: "Minimize in 8 seconds", target: self, action: #selector(minimizeLater)),
+            NSButton(title: "Fullscreen in 8 seconds", target: self, action: #selector(fullscreenLater))
         ])
         stack.orientation = .vertical
         stack.spacing = 16
@@ -32,6 +33,18 @@ import AppKit
     @objc private func minimizeLater() {
         status.stringValue = "The test window will minimize in 8 seconds."
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in self?.window.miniaturize(nil) }
+    }
+
+    @objc private func fullscreenLater() {
+        status.stringValue = "Fullscreen in 8 seconds, automatic exit 8 seconds later."
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self, !self.window.styleMask.contains(.fullScreen) else { return }
+            self.window.toggleFullScreen(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                guard let self, self.window.styleMask.contains(.fullScreen) else { return }
+                self.window.toggleFullScreen(nil)
+            }
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
