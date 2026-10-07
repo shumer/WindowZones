@@ -584,6 +584,11 @@ import LayoutStorage
         if busy { operation?.cancel() }
     }
 
+    private func fillDisplayIsCurrent() -> Bool {
+        let current = Display.connected().filter { $0.id == fillDisplays.first?.id }
+        return Display.compatible(fillDisplays, current)
+    }
+
     private func beginFillAssistant(layout: Layout, display: Display, target: CGRect, placed: WindowSnapshot) {
         guard UserDefaults.standard.object(forKey: "fillAssistantEnabled") == nil || UserDefaults.standard.bool(forKey: "fillAssistantEnabled") else { return }
         closeFillAssistant()
@@ -591,7 +596,7 @@ import LayoutStorage
         guard let index = zones.firstIndex(where: { GeometryEngine.close(display.ax($0), target) }), zones.count > 1 else { return }
         let token = Cancellation()
         fillToken = token
-        fillDisplays = Display.connected()
+        fillDisplays = [display]
         fillUsed = [placed]
         loadFillCandidates(layout: layout, display: display, initialIndex: index, token: token)
         fillRefreshTask = Task { [weak self] in
@@ -622,19 +627,19 @@ import LayoutStorage
                   rect.intersects(display.axVisible) else { return nil }
             return item[kCGWindowOwnerPID as String] as? Int32
         })
-        let pids = apps.map(\.processIdentifier).filter { visiblePIDs.contains($0) }
+        let pids = apps.map(\.processIdentifier).sorted { visiblePIDs.contains($0) && !visiblePIDs.contains($1) }
         let used = fillUsed
         Task {
             defer { fillRefreshing = false }
             let candidates = await access.fillCandidates(pids: pids, area: display.axVisible, excluding: [], previous: fillPrevious, cancellation: token)
             let unusedIDs = await access.unusedCandidateIDs(candidates, excluding: used)
             guard !token.cancelled, fillToken === token, fillLoadingID == request,
-                  Display.compatible(fillDisplays, Display.connected()) else { return }
+                  fillDisplayIsCurrent() else { return }
             let zones = resolvedZones(layout, on: display)
             // Limit suggestions to currently onscreen windows using public window metadata.
             let visible = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
             let available = candidates.filter { candidate in
-                visible.contains { item in
+                candidate.minimized || visible.contains { item in
                     guard (item[kCGWindowOwnerPID as String] as? Int32) == candidate.snapshot.pid,
                           (item[kCGWindowLayer as String] as? Int) == 0,
                           let bounds = item[kCGWindowBounds as String] as? NSDictionary,
@@ -645,15 +650,15 @@ import LayoutStorage
             let knownIDs = Set(fillPrevious.map(\.id))
             fillPrevious.append(contentsOf: candidates.filter { !knownIDs.contains($0.id) })
             let wasOpen = fillAssistant != nil
-            let placedFrames = available.filter { !unusedIDs.contains($0.id) }.map { $0.snapshot.frame }
+            let placedFrames = available.filter { !$0.minimized && !unusedIDs.contains($0.id) }.map { $0.snapshot.frame }
             var occupied = FillSession.occupied(zones: zones.map { display.ax($0) }, frames: placedFrames)
             let alignedFrames = available.filter { candidate in
-                zones.contains { FillSession.accepts(actual: candidate.snapshot.frame, target: display.ax($0)) }
+                !candidate.minimized && zones.contains { FillSession.accepts(actual: candidate.snapshot.frame, target: display.ax($0)) }
             }.map { $0.snapshot.frame }
             occupied.formUnion(FillSession.occupied(zones: zones.map { display.ax($0) }, frames: alignedFrames))
             if fillAssistant == nil {
                 occupied.insert(initialIndex)
-                for candidate in available {
+                for candidate in available where !candidate.minimized {
                     for (index, zone) in zones.enumerated() where GeometryEngine.close(candidate.snapshot.frame, display.ax(zone)) {
                         occupied.insert(index)
                     }
@@ -673,7 +678,7 @@ import LayoutStorage
                 }
                 panel.onChoose = { [weak self = self, weak panel] candidate, index in
                     guard let self, !token.cancelled, self.fillToken === token, zones.indices.contains(index),
-                          Display.compatible(self.fillDisplays, Display.connected()),
+                          self.fillDisplayIsCurrent(),
                           let app = NSRunningApplication(processIdentifier: candidate.snapshot.pid), !app.isTerminated else {
                         panel?.failed()
                         return
@@ -684,6 +689,7 @@ import LayoutStorage
                     Task { [weak self, weak panel] in
                         guard let self else { return }
                         do {
+                            try await self.access.restoreForFill(candidate, cancellation: token)
                             let frame = try await self.access.currentFrame(candidate.snapshot, cancellation: token)
                             guard !token.cancelled, self.fillToken === token else { return }
                             let snapshot = WindowSnapshot(reference: candidate.snapshot.reference, frame: frame, pid: candidate.snapshot.pid)
@@ -704,7 +710,7 @@ import LayoutStorage
                 }
             }
             let occupiedWindows = available.filter { candidate in
-                unusedIDs.contains(candidate.id) && !zones.contains { FillSession.accepts(actual: candidate.snapshot.frame, target: display.ax($0)) }
+                unusedIDs.contains(candidate.id) && (candidate.minimized || !zones.contains { FillSession.accepts(actual: candidate.snapshot.frame, target: display.ax($0)) })
             }
             fillScanSummary = "Заполнение: экран \(display.id), apps=\(pids.count), AX=\(candidates.count), visible=\(available.count), used=\(placedFrames.count), occupied=\(occupied.count)/\(zones.count), cards=\(occupiedWindows.count)"
             refreshReport()
@@ -736,7 +742,10 @@ import LayoutStorage
         let current = Display.connected()
         sessionLayouts = sessionLayouts.filter { id, _ in current.contains { $0.id == id } }
         var baselines: [[Display]] = []
-        if fillToken != nil { baselines.append(fillDisplays) }
+        if fillToken != nil, !fillDisplayIsCurrent() {
+            cancelForContextChange("Целевой экран заполнения изменился")
+            return
+        }
         if picker != nil { baselines.append(pickerDisplays) }
         if dragToken != nil { baselines.append(dragDisplays) }
         if busy { baselines.append(operationDisplays) }
@@ -761,8 +770,8 @@ import LayoutStorage
     }
 
     private func cancelForContextChange(_ reason: String) {
+        let hadInteraction = fillToken != nil || picker != nil || pickerCapture != nil || dragToken != nil || busy
         closeFillAssistant()
-        let hadInteraction = picker != nil || pickerCapture != nil || dragToken != nil || busy
         dismissPicker(restoreFocus: false)
         cancelDrag()
         if hadInteraction { record("\(reason): взаимодействие отменено без возврата фокуса") }
@@ -813,6 +822,9 @@ import LayoutStorage
             if picker != nil || pickerCapture != nil { cancelPicker() }
             cancelDrag()
             return
+        }
+        if [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type), fillToken != nil {
+            closeFillAssistant()
         }
         guard dragEnabled, libraryLoaded, !busy, picker == nil, fillToken == nil else { return }
         if event.type == .keyDown {

@@ -25,6 +25,7 @@ struct FillCandidate: Sendable {
     let id: UUID
     let snapshot: WindowSnapshot
     let title: String
+    let minimized: Bool
 }
 
 struct FrameSample: Sendable {
@@ -112,14 +113,16 @@ actor WindowAccess {
     }
 
     private func validate(_ window: AXUIElement, until deadline: TimeInterval,
-                          cancellation: Cancellation? = nil) throws {
+                          cancellation: Cancellation? = nil, allowMinimized: Bool = false) throws {
         let role = try read(window, kAXRoleAttribute, until: deadline, cancellation: cancellation) as? String
         let subrole = try read(window, kAXSubroleAttribute, until: deadline, cancellation: cancellation) as? String
         guard role == kAXWindowRole, subrole == kAXStandardWindowSubrole else {
             throw AccessFailure(status: "unsupported", message: "Поддерживаются только обычные окна")
         }
         let minimized = try read(window, kAXMinimizedAttribute, until: deadline, cancellation: cancellation) as? Bool
-        guard minimized == false else { throw AccessFailure(status: "unsupported", message: "Окно свёрнуто или статус неизвестен") }
+        guard minimized == false || (allowMinimized && minimized == true) else { throw AccessFailure(status: "unsupported", message: "Окно свёрнуто или статус неизвестен") }
+        // Some apps expose resize and fullscreen capabilities only after restoring from Dock.
+        if allowMinimized && minimized == true { return }
         do {
             let fullScreen = try read(window, "AXFullScreen", until: deadline, cancellation: cancellation) as? Bool
             guard fullScreen == false else { throw AccessFailure(status: "unsupported", message: "Полноэкранное окно или статус неизвестен") }
@@ -223,19 +226,43 @@ actor WindowAccess {
                 if result.contains(where: { CFEqual($0.snapshot.reference.element, window) }) { continue }
                 let windowDeadline = min(deadline, ProcessInfo.processInfo.systemUptime + 0.3)
                 do {
-                    try validate(window, until: windowDeadline, cancellation: cancellation)
-                    let rect = try frame(window, until: windowDeadline, cancellation: cancellation)
+                    try validate(window, until: windowDeadline, cancellation: cancellation, allowMinimized: true)
+                    let minimized = (try? read(window, kAXMinimizedAttribute, until: windowDeadline, cancellation: cancellation)) as? Bool ?? false
+                    // Minimized windows may omit geometry; placement reads it again after restoration.
+                    let measured = try? frame(window, until: windowDeadline, cancellation: cancellation)
+                    guard let rect = measured ?? (minimized ? CGRect.zero : nil) else { continue }
                     let intersection = rect.intersection(area)
-                    guard !intersection.isNull, intersection.width * intersection.height > 0 else { continue }
+                    guard minimized || (!intersection.isNull && intersection.width * intersection.height > 0) else { continue }
                     // Titles are transient UI labels and are never included in diagnostics.
                     let title = (try? read(window, kAXTitleAttribute, until: windowDeadline, cancellation: cancellation)) as? String ?? ""
                     result.append(FillCandidate(id: previous.first(where: { CFEqual($0.snapshot.reference.element, window) })?.id ?? UUID(), snapshot: WindowSnapshot(reference: WindowReference(window), frame: rect, pid: pid),
-                                                title: String(title.prefix(160))))
+                                                title: String(title.prefix(160)), minimized: minimized))
                 } catch { continue }
             }
             await Task.yield()
         }
         return result
+    }
+
+    func restoreForFill(_ candidate: FillCandidate, cancellation: Cancellation) async throws {
+        let window = candidate.snapshot.reference.element
+        let deadline = ProcessInfo.processInfo.systemUptime + 1.5
+        try validate(window, until: deadline, cancellation: cancellation, allowMinimized: true)
+        let minimized = try read(window, kAXMinimizedAttribute, until: deadline, cancellation: cancellation) as? Bool
+        guard minimized == true else { return }
+        try prepare(window, until: deadline, cancellation: cancellation)
+        let error = AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+        guard error == .success else { throw failure(error, operation: "restore minimized window") }
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            try Task.checkCancellation()
+            if cancellation.cancelled { throw CancellationError() }
+            if (try? read(window, kAXMinimizedAttribute, until: deadline, cancellation: cancellation)) as? Bool == false {
+                try validate(window, until: deadline, cancellation: cancellation)
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw AccessFailure(status: "failed", message: "Окно не восстановилось из Dock")
     }
 
     func validateTarget(_ snapshot: WindowSnapshot, cancellation: Cancellation) throws {

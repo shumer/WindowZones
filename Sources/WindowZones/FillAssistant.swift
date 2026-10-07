@@ -7,31 +7,79 @@ import Geometry
 }
 
 @MainActor final class FillPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
     var navigate: ((UInt16) -> Bool)?
+    var dismiss: (() -> Void)?
     override func keyDown(with event: NSEvent) {
         if navigate?(event.keyCode) != true { super.keyDown(with: event) }
     }
-    var dismiss: (() -> Void)?
     override func cancelOperation(_ sender: Any?) { dismiss?() }
+}
+
+@MainActor final class FillCard: NSButton {
+    override var isFlipped: Bool { false }
+    var preview: NSImage? { didSet { needsDisplay = true } }
+    var appIcon: NSImage?
+    var appName = ""
+    var windowName = ""
+    var minimized = false
+    private var hovered = false
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+    override func draw(_ dirtyRect: NSRect) {
+        let selected = window?.firstResponder === self || hovered || isHighlighted
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 3, dy: 3), xRadius: 16, yRadius: 16)
+        NSColor.windowBackgroundColor.withAlphaComponent(selected ? 0.98 : 0.88).setFill()
+        shape.fill()
+        (selected ? NSColor.controlAccentColor : NSColor.separatorColor.withAlphaComponent(0.35)).setStroke()
+        shape.lineWidth = selected ? 3 : 1
+        shape.stroke()
+        let content = NSRect(x: 15, y: 49, width: bounds.width - 30, height: bounds.height - 65)
+        if let image = preview ?? appIcon {
+            let scale = min(content.width / max(1, image.size.width), content.height / max(1, image.size.height), preview == nil ? 1 : 10)
+            let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+            image.draw(in: NSRect(x: content.midX - size.width / 2, y: content.midY - size.height / 2, width: size.width, height: size.height),
+                       from: .zero, operation: .sourceOver, fraction: isEnabled ? 1 : 0.5, respectFlipped: true, hints: nil)
+        }
+        appIcon?.draw(in: NSRect(x: 16, y: 17, width: 24, height: 24), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        let label = minimized ? "\(appName) · Свёрнуто" : appName
+        (label as NSString).draw(in: NSRect(x: 48, y: 28, width: bounds.width - 64, height: 17), withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph])
+        (windowName as NSString).draw(in: NSRect(x: 48, y: 11, width: bounds.width - 64, height: 16), withAttributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: paragraph])
+    }
+}
+
+@MainActor final class FillBackdrop: NSVisualEffectView {
+    var dismiss: (() -> Void)?
+    override func mouseDown(with event: NSEvent) { dismiss?() }
 }
 
 @MainActor final class FillAssistant: NSObject, NSWindowDelegate {
     let panel: FillPanel
     private let zones: [CGRect]
     private let area: CGRect
-    private let map = NSView()
     private let list = FillList()
-    private let status = NSTextField(wrappingLabelWithString: "Ищем доступные окна…")
-    private let root = NSStackView()
+    private let scroll = NSScrollView()
+    private let status = NSTextField(wrappingLabelWithString: "")
+    private let root = FillBackdrop()
+    private let skipButton = NSButton(title: "Пропустить", target: nil, action: nil)
+    private let previewsButton = NSButton(title: "Разрешить миниатюры", target: nil, action: nil)
     private var occupied: Set<Int>
     private var session: FillSession
     private var candidates: [FillCandidate] = []
-    private var buttons: [UUID: NSButton] = [:]
+    private var buttons: [UUID: FillCard] = [:]
     private var imageTask: Task<Void, Never>?
     private(set) var isBusy = false
     private var failureMessage: String?
     private var focusedID: UUID?
-    private var controls: [NSControl] = []
+    private var columns = 2
     var onChoose: ((FillCandidate, Int) -> Void)?
     var onClose: (() -> Void)?
     var onUndo: (() -> Void)?
@@ -42,64 +90,75 @@ import Geometry
         self.area = area
         self.occupied = occupied
         session = FillSession(count: zones.count, occupied: occupied)
-        panel = FillPanel(contentRect: CGRect(x: 0, y: 0, width: 720, height: 700),
-                          styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        panel = FillPanel(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
         super.init()
-        panel.title = "Заполнить раскладку"
+        panel.title = "Выбор окна для свободной зоны"
+        panel.setAccessibilityElement(true)
+        panel.setAccessibilityRole(.window)
+        panel.setAccessibilitySubrole(.dialog)
+        panel.setAccessibilityLabel("Выбор окна для свободной зоны")
         panel.isReleasedWhenClosed = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
         panel.level = .floating
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.moveToActiveSpace]
-        panel.becomesKeyOnlyIfNeeded = false
         panel.delegate = self
-        panel.navigate = { [weak self] key in self?.navigate(key) ?? false }
+        panel.navigate = { [weak self] in self?.navigate($0) ?? false }
         panel.dismiss = { [weak self] in self?.onClose?() }
-        root.orientation = .vertical
-        root.alignment = .leading
-        root.spacing = 12
-        root.edgeInsets = NSEdgeInsets(top: 20, left: 24, bottom: 20, right: 24)
-        let title = NSTextField(labelWithString: "Выбери окно для следующей зоны")
-        title.font = .systemFont(ofSize: 19, weight: .semibold)
-        root.addArrangedSubview(title)
-        root.addArrangedSubview(status)
-        map.widthAnchor.constraint(equalToConstant: 672).isActive = true
-        map.heightAnchor.constraint(equalToConstant: 130).isActive = true
-        root.addArrangedSubview(map)
-        let scroll = NSScrollView()
+        root.dismiss = { [weak self] in self?.onClose?() }
+        root.material = .hudWindow
+        root.blendingMode = .behindWindow
+        root.state = .active
+        root.wantsLayer = true
+        root.layer?.cornerRadius = 22
+        root.layer?.masksToBounds = true
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
         scroll.drawsBackground = false
-        scroll.widthAnchor.constraint(equalToConstant: 672).isActive = true
-        scroll.heightAnchor.constraint(equalToConstant: min(360, max(180, area.height - 360))).isActive = true
         list.orientation = .vertical
-        list.alignment = .leading
-        list.spacing = 8
+        list.alignment = .centerX
+        list.spacing = 12
         list.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = list
         list.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
-        root.addArrangedSubview(scroll)
-        let footer = NSStackView()
-        footer.spacing = 10
-        for (title, action) in [("Пропустить", #selector(skip)), ("Обновить", #selector(refresh)),
-                                ("Undo", #selector(undo)), ("Готово", #selector(done))] {
-            let button = NSButton(title: title, target: self, action: action)
-            footer.addArrangedSubview(button)
-            controls.append(button)
-        }
-        root.addArrangedSubview(footer)
-        let previews = NSButton(title: "Разрешить миниатюры…", target: self, action: #selector(allowPreviews))
-        previews.isHidden = CGPreflightScreenCaptureAccess()
-        root.addArrangedSubview(previews)
+        root.addSubview(scroll)
+        status.font = .systemFont(ofSize: 12)
+        status.textColor = .secondaryLabelColor
+        root.addSubview(status)
+        skipButton.bezelStyle = .inline
+        skipButton.target = self
+        skipButton.action = #selector(skip)
+        root.addSubview(skipButton)
+        previewsButton.bezelStyle = .inline
+        previewsButton.target = self
+        previewsButton.action = #selector(allowPreviews)
+        root.addSubview(previewsButton)
         panel.contentView = root
-        root.widthAnchor.constraint(equalToConstant: 720).isActive = true
-        drawMap()
+        positionInZone()
     }
 
     var isComplete: Bool { session.selected == nil }
 
+    private func positionInZone() {
+        guard let index = session.selected else { return }
+        let frame = zones[index].intersection(area).insetBy(dx: 6, dy: 6)
+        panel.setFrame(frame, display: true)
+        root.frame = CGRect(origin: .zero, size: frame.size)
+        let width = max(120, min(1080, frame.width - 40))
+        scroll.frame = CGRect(x: (frame.width - width) / 2, y: 60, width: width, height: max(80, frame.height - 86))
+        status.frame = CGRect(x: 24, y: 16, width: max(80, frame.width - 156), height: 30)
+        skipButton.frame = CGRect(x: max(0, frame.width - 116), y: 20, width: 96, height: 24)
+        previewsButton.frame = CGRect(x: 24, y: max(60, frame.height - 30), width: 180, height: 22)
+        previewsButton.isHidden = CGPreflightScreenCaptureAccess()
+        columns = max(1, min(4, Int(width / 240)))
+        updateStatus()
+    }
+
     func show() {
-        // Anchor the assistant to the target display instead of the app's last active screen.
-        let anchor = session.selected.map { zones[$0] } ?? area
-        panel.setFrameOrigin(FillSession.panelOrigin(size: panel.frame.size, anchor: anchor, available: area))
+        positionInZone()
+        update(candidates, force: true)
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
@@ -116,22 +175,22 @@ import Geometry
 
     func setBusy(_ busy: Bool) {
         isBusy = busy
-        controls.forEach { $0.isEnabled = !busy }
+        skipButton.isEnabled = !busy
         buttons.values.forEach { $0.isEnabled = !busy }
-        map.subviews.compactMap { $0 as? NSButton }.forEach { $0.isEnabled = !busy && session.remaining.contains($0.tag) }
     }
 
     func reconcile(occupied: Set<Int>) {
         guard self.occupied != occupied else { return }
         self.occupied = occupied
+        let previous = session.selected
         session.reconcile(occupied: occupied)
-        drawMap()
-        if isComplete { onClose?() }
+        if isComplete { onClose?(); return }
+        if previous != session.selected { positionInZone(); update(candidates, force: true) }
     }
 
     func update(_ candidates: [FillCandidate], force: Bool = false) {
         let unchanged = self.candidates.count == candidates.count && zip(self.candidates, candidates).allSatisfy {
-            $0.id == $1.id && $0.title == $1.title && $0.snapshot.frame == $1.snapshot.frame
+            $0.id == $1.id && $0.title == $1.title && $0.snapshot.frame == $1.snapshot.frame && $0.minimized == $1.minimized
         }
         guard force || !unchanged else { return }
         let focused = buttons.first { $0.value === panel.firstResponder }?.key ?? focusedID
@@ -139,21 +198,28 @@ import Geometry
         self.candidates = candidates
         buttons = [:]
         list.arrangedSubviews.forEach { list.removeArrangedSubview($0); $0.removeFromSuperview() }
-        for start in stride(from: 0, to: candidates.count, by: 2) {
+        let width = max(100, (scroll.frame.width - CGFloat(columns - 1) * 12 - 16) / CGFloat(columns))
+        let cardHeight = min(230, max(150, width * 0.67))
+        let rows = max(1, Int(ceil(Double(candidates.count) / Double(columns))))
+        let availableHeight = max(80, root.bounds.height - 86)
+        let contentHeight = min(availableHeight, CGFloat(rows) * (cardHeight + 12) - 12)
+        scroll.setFrameSize(NSSize(width: scroll.frame.width, height: contentHeight))
+        scroll.setFrameOrigin(NSPoint(x: scroll.frame.minX, y: 60 + (availableHeight - contentHeight) / 2))
+        for start in stride(from: 0, to: candidates.count, by: columns) {
             let row = NSStackView()
-            row.spacing = 8
-            for candidate in candidates[start..<min(start + 2, candidates.count)] {
+            row.spacing = 12
+            for candidate in candidates[start..<min(start + columns, candidates.count)] {
                 let app = NSRunningApplication(processIdentifier: candidate.snapshot.pid)
-                let label = candidate.title.isEmpty ? (app?.localizedName ?? "Окно") : "\(app?.localizedName ?? "Приложение")\n\(candidate.title)"
-                let button = NSButton(title: label, target: self, action: #selector(choose(_:)))
+                let button = FillCard(title: "", target: self, action: #selector(choose(_:)))
                 button.identifier = NSUserInterfaceItemIdentifier(candidate.id.uuidString)
-                button.image = app?.icon
-                button.imagePosition = .imageAbove
-                button.imageScaling = .scaleProportionallyDown
-                button.lineBreakMode = .byTruncatingTail
-                button.setAccessibilityLabel(label)
-                button.widthAnchor.constraint(equalToConstant: 328).isActive = true
-                button.heightAnchor.constraint(equalToConstant: 172).isActive = true
+                button.appIcon = app?.icon
+                button.appName = app?.localizedName ?? "Приложение"
+                button.windowName = candidate.title
+                button.minimized = candidate.minimized
+                button.isBordered = false
+                button.setAccessibilityLabel("\(button.appName), \(candidate.title)\(candidate.minimized ? ", свёрнуто" : "")")
+                button.widthAnchor.constraint(equalToConstant: width).isActive = true
+                button.heightAnchor.constraint(equalToConstant: cardHeight).isActive = true
                 buttons[candidate.id] = button
                 row.addArrangedSubview(button)
             }
@@ -169,43 +235,18 @@ import Geometry
         occupied.formUnion(blocked)
         session.reconcile(occupied: occupied)
         if isComplete { onClose?(); return }
-        drawMap()
+        positionInZone()
         update(candidates, force: true)
     }
 
     func failed() {
         setBusy(false)
-        failureMessage = "Окно не помещается точно или недоступно. Undo вернёт последнее размещение. Выбери другое окно."
+        failureMessage = "Окно недоступно или не помещается. Выбери другое. Отмена размещения доступна в меню."
         updateStatus()
     }
 
     private func updateStatus() {
-        if let failureMessage { status.stringValue = failureMessage; return }
-        status.stringValue = candidates.isEmpty ? "Нет доступных окон на этом экране. Открой окно, список обновится автоматически." : "Зона \((session.selected ?? 0) + 1) · Осталось \(session.remaining.count). ✓ занято или перекрыто. Escape завершает выбор."
-    }
-
-    private func drawMap() {
-        map.subviews.forEach { $0.removeFromSuperview() }
-        let scale = min(672 / area.width, 130 / area.height)
-        for (index, zone) in zones.enumerated() {
-            let button = NSButton(title: occupied.contains(index) ? "✓" : session.remaining.contains(index) ? "\(index + 1)" : "Пропуск",
-                                  target: self, action: #selector(selectZone(_:)))
-            button.tag = index
-            button.frame = CGRect(x: (672 - area.width * scale) / 2 + (zone.minX - area.minX) * scale,
-                                  y: (zone.minY - area.minY) * scale,
-                                  width: max(20, zone.width * scale - 3), height: max(20, zone.height * scale - 3))
-            button.bezelStyle = .regularSquare
-            button.wantsLayer = true
-            button.layer?.cornerRadius = 8
-            button.layer?.borderWidth = session.selected == index ? 3 : 0
-            button.layer?.borderColor = NSColor.controlAccentColor.cgColor
-            button.layer?.backgroundColor = session.selected == index ? NSColor.controlAccentColor.withAlphaComponent(0.18).cgColor : NSColor.clear.cgColor
-            button.contentTintColor = session.selected == index ? .controlAccentColor : .secondaryLabelColor
-            button.isEnabled = session.remaining.contains(index)
-            button.setAccessibilityLabel("Зона \(index + 1)\(session.selected == index ? ", выбрана" : "")")
-            map.addSubview(button)
-        }
-        updateStatus()
+        status.stringValue = failureMessage ?? (candidates.isEmpty ? "Нет доступных окон. Список обновляется автоматически." : "Выбери окно · Зона \((session.selected ?? 0) + 1) · Esc для выхода")
     }
 
     private func navigate(_ key: UInt16) -> Bool {
@@ -220,8 +261,8 @@ import Geometry
         switch key {
         case 123: delta = -1
         case 124: delta = 1
-        case 125: delta = 2
-        case 126: delta = -2
+        case 125: delta = columns
+        case 126: delta = -columns
         default: return false
         }
         let next = min(candidates.count - 1, max(0, index + delta))
@@ -229,11 +270,11 @@ import Geometry
         if let button = buttons[candidates[next].id] {
             panel.makeFirstResponder(button)
             button.scrollToVisible(button.bounds)
+            buttons.values.forEach { $0.needsDisplay = true }
         }
         return true
     }
 
-    @objc private func selectZone(_ sender: NSButton) { failureMessage = nil; session.select(sender.tag); drawMap() }
     @objc private func choose(_ sender: NSButton) {
         guard let index = session.selected, let candidate = candidates.first(where: { $0.id.uuidString == sender.identifier?.rawValue }) else { return }
         failureMessage = nil
@@ -242,17 +283,14 @@ import Geometry
     }
     @objc private func skip() {
         session.advance()
-        if isComplete { onClose?() } else { drawMap() }
+        if isComplete { onClose?() } else { positionInZone(); update(candidates, force: true) }
     }
-    @objc private func refresh() { onRefresh?() }
-    @objc private func undo() { onUndo?() }
-    @objc private func done() { onClose?() }
     func windowWillClose(_ notification: Notification) { onClose?() }
 
     @objc private func allowPreviews() {
         _ = CGRequestScreenCaptureAccess()
-        if CGPreflightScreenCaptureAccess() { loadPreviews() }
-        else { status.stringValue = "Разреши запись экрана для WindowZones в системных настройках. Пока доступны иконки." }
+        if CGPreflightScreenCaptureAccess() { previewsButton.isHidden = true; loadPreviews() }
+        else { status.stringValue = "Разреши запись экрана для миниатюр. Пока доступны иконки." }
     }
 
     private func loadPreviews() {
@@ -260,19 +298,18 @@ import Geometry
         let current = candidates
         imageTask = Task { [weak self] in
             guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true), !Task.isCancelled else { return }
-            for candidate in current {
+            for candidate in current where !candidate.minimized {
                 guard !Task.isCancelled else { return }
                 let matches = content.windows.filter {
                     $0.owningApplication?.processID == candidate.snapshot.pid && GeometryEngine.close($0.frame, candidate.snapshot.frame)
                 }
                 guard matches.count == 1, let window = matches.first else { continue }
                 let configuration = SCStreamConfiguration()
-                configuration.width = 360
-                configuration.height = max(1, Int(360 * window.frame.height / max(1, window.frame.width)))
+                configuration.width = 480
+                configuration.height = max(1, Int(480 * window.frame.height / max(1, window.frame.width)))
                 configuration.showsCursor = false
-                guard let image = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: configuration),
-                      !Task.isCancelled else { continue }
-                self?.buttons[candidate.id]?.image = NSImage(cgImage: image, size: NSSize(width: 280, height: 280 * CGFloat(image.height) / CGFloat(image.width)))
+                guard let image = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: configuration), !Task.isCancelled else { continue }
+                self?.buttons[candidate.id]?.preview = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
             }
         }
     }
