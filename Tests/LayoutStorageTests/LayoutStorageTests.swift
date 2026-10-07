@@ -4,6 +4,19 @@ import Testing
 @testable import LayoutStorage
 
 struct LayoutStorageTests {
+    @Test func standardPresetUpgradePreservesAssignmentsAndCustomLibraries() throws {
+        let old = LayoutCollection(layouts: BuiltInLayouts.legacy,
+            activeByDisplay: ["a": BuiltInLayouts.thirds.id, "b": BuiltInLayouts.focused.id])
+        let updated = old.upgradingStandardPresets()
+        #expect(updated.layouts == BuiltInLayouts.all)
+        #expect(updated.activeByDisplay == ["a": BuiltInLayouts.thirds.id, "b": BuiltInLayouts.halves.id])
+        #expect(updated.upgradingStandardPresets() == updated)
+        let custom = collection("Custom")
+        #expect(custom.upgradingStandardPresets() == custom)
+        let decoded = try LayoutArchive.decode(LayoutArchive.encode(updated))
+        #expect(decoded == updated)
+    }
+
     private func collection(_ name: String) -> LayoutCollection {
         let layout = Layout(name: name, root: .split(axis: .vertical, ratio: 0.3,
                             first: .zone(id: UUID(), name: "Левая"),

@@ -20,6 +20,14 @@ public struct LayoutCollection: Sendable, Equatable {
         self.activeByDisplay = activeByDisplay
     }
 
+    public func upgradingStandardPresets() -> LayoutCollection {
+        // Only replace the untouched legacy library, preserving all custom libraries.
+        guard layouts == BuiltInLayouts.legacy else { return self }
+        let retained = Set(BuiltInLayouts.all.map(\.id))
+        let active = activeByDisplay.mapValues { retained.contains($0) ? $0 : BuiltInLayouts.halves.id }
+        return LayoutCollection(layouts: BuiltInLayouts.all, activeByDisplay: active)
+    }
+
     public func validate() throws {
         guard !layouts.isEmpty else { throw ArchiveError.emptyLibrary }
         var ids = Set<UUID>()

@@ -7,12 +7,13 @@ struct BuiltInLayoutsTests {
     @Test func presetsHaveStableDistinctIdentitiesAndExpectedZoneCounts() throws {
         #expect(BuiltInLayouts.all.map(\.id) == [
             UUID(uuidString: "575A0000-0000-4000-8000-000000000001")!,
+            UUID(uuidString: "575A0000-0000-4000-8000-000000000005")!,
             UUID(uuidString: "575A0000-0000-4000-8000-000000000002")!,
-            UUID(uuidString: "575A0000-0000-4000-8000-000000000003")!,
-            UUID(uuidString: "575A0000-0000-4000-8000-000000000004")!
+            UUID(uuidString: "575A0000-0000-4000-8000-000000000006")!,
+            UUID(uuidString: "575A0000-0000-4000-8000-000000000007")!
         ])
         var ids = Set<UUID>()
-        for (layout, count) in zip(BuiltInLayouts.all, [2, 3, 3, 4]) {
+        for (layout, count) in zip(BuiltInLayouts.all, [2, 2, 3, 2, 4]) {
             for scale: CGFloat in [1, 2] {
                 let zones = try LayoutGeometry.zones(for: layout,
                     in: CGRect(x: -1512, y: 458, width: 1512, height: 949), scale: scale)
@@ -24,6 +25,20 @@ struct BuiltInLayoutsTests {
                 }
             }
         }
+    }
+
+    @Test func newPresetsHaveRequestedAreasAndReadingOrder() throws {
+        let area = CGRect(x: 0, y: 0, width: 1600, height: 800)
+        func frames(_ preset: Layout) throws -> [CGRect] {
+            try LayoutGeometry.zones(for: Layout(name: preset.name, root: preset.root, inset: 0, gap: 0),
+                                     in: area, scale: 2).map(\.frame)
+        }
+        #expect(try frames(BuiltInLayouts.wideLeft).map(\.width) == [1200, 400])
+        #expect(try frames(BuiltInLayouts.rows) == [CGRect(x: 0, y: 400, width: 1600, height: 400),
+                                                 CGRect(x: 0, y: 0, width: 1600, height: 400)])
+        #expect(try frames(BuiltInLayouts.quarters) == [CGRect(x: 0, y: 400, width: 800, height: 400),
+            CGRect(x: 800, y: 400, width: 800, height: 400), CGRect(x: 0, y: 0, width: 800, height: 400),
+            CGRect(x: 800, y: 0, width: 800, height: 400)])
     }
 
     @Test func focusedPresetHasQuarterHalfQuarterWithoutGaps() throws {

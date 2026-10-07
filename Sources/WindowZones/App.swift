@@ -23,7 +23,7 @@ import LayoutStorage
     private var layoutStore: LayoutStore?
     private var libraryLoaded = false
     private var libraryWarning: String?
-    private var pickerLayoutID = BuiltInLayouts.focused.id
+    private var pickerLayoutID = BuiltInLayouts.halves.id
     private var sessionLayouts: [UInt32: UUID] = [:]
     private var picker: PickerWindow?
     private var pickerDisplay: NSPopUpButton?
@@ -102,7 +102,9 @@ import LayoutStorage
             do {
                 let store = LayoutStore(directory: try LayoutStore.applicationSupportDirectory())
                 let loaded = try await store.load()
-                library = loaded.collection
+                let upgraded = loaded.collection.upgradingStandardPresets()
+                if upgraded != loaded.collection { try await store.save(upgraded) }
+                library = upgraded
                 layoutStore = store
                 if loaded.source == .backup { libraryWarning = "Восстановлено из копии" }
             } catch {
@@ -116,7 +118,7 @@ import LayoutStorage
         let key = display.uniqueStorageKey(in: Display.connected())
         let id = sessionLayouts[display.id] ?? key.flatMap { library.activeByDisplay[$0] }
         return library.layouts.first { $0.id == id }
-            ?? library.layouts.first { $0.id == BuiltInLayouts.focused.id }
+            ?? library.layouts.first { $0.id == BuiltInLayouts.halves.id }
             ?? library.layouts[0]
     }
 
@@ -360,7 +362,7 @@ import LayoutStorage
     private func showPicker(_ snapshot: WindowSnapshot) {
         pickerDisplays = Display.connected()
         guard !pickerDisplays.isEmpty else { record("Нет доступного экрана"); return }
-        let window = PickerWindow(contentRect: CGRect(x: 0, y: 0, width: 520, height: 420), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = PickerWindow(contentRect: CGRect(x: 0, y: 0, width: 520, height: 520), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Разместить выбранное окно"
         window.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         window.isReleasedWhenClosed = false
