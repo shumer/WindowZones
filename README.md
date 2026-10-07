@@ -17,17 +17,16 @@ another built-in layout without sizing each window by hand.
 
 <img src="Resources/AppIcon.iconset/icon_128x128@2x.png" alt="WindowZones app icon showing three window zones" width="128">
 
-## Preview 0.2.0
+## New in 0.2.0
 
-The next preview adds five layouts: equal columns, 75/25, thirds, top/bottom halves,
+Version 0.2.0 adds five layouts: equal columns, 75/25, thirds, top/bottom halves,
 and four quarters. After placing one window, choose another window from cards in
 the next free zone. Skip a zone or press Escape to stop. Minimized windows can be
 restored by choosing their card. Screen Recording permission enables thumbnails;
 without it, cards use app icons. Previews stay in memory.
 
-[Preview releases](https://github.com/shumer/WindowZones/releases) are installed
-manually and are not offered through the stable automatic update feed. The latest
-stable download remains 0.1.0. The custom menu bar icon shows a window and one filled zone.
+[Download 0.2.0](https://github.com/shumer/WindowZones/releases/tag/v0.2.0) or use
+Check for Updates in the app. This is an early release with known limitations. The custom menu bar icon shows a window and one filled zone.
 
 ## What can I do with it?
 
@@ -128,7 +127,7 @@ an older version successfully downloaded, installed and relaunched into 0.1.0 th
 Sparkle. Installation on a clean user profile and a real launch after signing in
 still need verification.
 
-Preview 0.2.0 was primarily checked on macOS 27.0.1. Chrome has previously failed
+Version 0.2.0 was primarily checked on macOS 27.0.1. Chrome has previously failed
 to expose a usable Accessibility window. Minimized Telegram windows and the full
 Spaces, sleep and monitor-disconnect matrix are not verified. Some apps enforce a
 minimum window size. Undo restores geometry but does not minimize a restored window

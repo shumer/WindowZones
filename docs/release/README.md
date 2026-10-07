@@ -1,6 +1,6 @@
 # Выпуск WindowZones 0.1
 
-Статус: подготовка. Локальная проверка скриптов не означает успешную подпись, notarization или обновление. Публичного выпуска пока нет.
+История первого выпуска: 0.1.0 опубликован 19 сентября 2026. Подпись, notarization и Sparkle upgrade подтверждены в tasks/13-distribution.md. Порядок подготовки 0.2.0 описан в ColleaguePreview.md; каждый новый архив проверяется отдельно.
 
 ## Что делает CI
 
@@ -53,7 +53,7 @@ Variables:
 
 ## Проверено и ещё не проверено
 
-Локально: синтаксис shell/Python, генерация appcast на искусственном fixture и отказ при некорректной конфигурации. Реальная Developer ID подпись, CI на Xcode 26.6, notarization, чистая установка и полный цикл Sparkle ещё не подтверждены.
+Для 0.1.0 подтверждены Developer ID, CI на закреплённом SDK, notarization и Sparkle upgrade тестовой 0.0.0. Чистая установка и полный диапазон macOS остаются непроверенными. Эти результаты не заменяют проверку нового архива.
 
 Источники: [Sparkle manual signing](https://sparkle-project.org/documentation/sandboxing/), [Sparkle publishing](https://sparkle-project.org/documentation/publishing/), [GitHub macOS arm64 image](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md). Проверены 19 сентября 2026.
 
@@ -70,3 +70,10 @@ Variables:
 Постоянная подпись нужна для сохранения Accessibility; после установки проверять фактический статус и размещение окна. При сбросе разрешения сообщать пользователю, не выдавать его заново автоматически. Правила не означают, что смена сертификата при продлении гарантированно сохранит каждое разрешение macOS.
 
 Проверка 7 октября: первый `./scripts/install.sh --diagnostics` и повторный `SKIP_TESTS=1 ./scripts/install.sh --diagnostics` завершились строкой Installed с team MW9955TT6R. Первый прогон включал 45 успешных тестов. После повторной установки диагностика показала Accessibility разрешён, реальный Finder snap из 1284/38/1268/1304 в 8/38/1268/1304 завершился exact за 227 ms. Повторного запроса разрешения не было. build.sh и sign-app.sh не менялись.
+
+
+## Установка готового релизного кандидата
+
+Использовать `./scripts/install.sh --release-app /absolute/path/WindowZones.app --diagnostics`. Этот режим не пересобирает и не переподписывает архив. До замены Applications он требует codesign, stapler и Gatekeeper, затем проверяет постоянные team ID и bundle ID. Остальные проверки App Management и сохранение резервной копии остаются общими с обычной установкой.
+
+Prerelease на GitHub не заменяет latest и не поступает в стабильный Sparkle feed. 0.2.0 по последующему запросу пользователя опубликована обычным release и доступна в latest feed. Проверена ручная замена приложения; автоматический upgrade до неё не заявляется проверенным.
