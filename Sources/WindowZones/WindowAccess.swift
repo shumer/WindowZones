@@ -178,7 +178,7 @@ actor WindowAccess {
         return WindowSnapshot(reference: WindowReference(window), frame: initial, pid: pid)
     }
 
-    func validateDragCandidate(_ snapshot: WindowSnapshot, cancellation: Cancellation) throws {
+    func validateTarget(_ snapshot: WindowSnapshot, cancellation: Cancellation) throws {
         try validate(snapshot.reference.element, until: ProcessInfo.processInfo.systemUptime + 0.25,
                      cancellation: cancellation)
     }

@@ -31,6 +31,9 @@ import LayoutStorage
     private var pickerContent: ZonePickerContent?
     private var pickerSnapshot: WindowSnapshot?
     private var pickerCapture: Cancellation?
+    private var pickerWatchToken: Cancellation?
+    private var pickerWatchTimer: Timer?
+    private var pickerWatchChecking = false
     private var pickerDisplays: [Display] = []
     private var operationDisplays: [Display] = []
     private var operation: Cancellation?
@@ -85,6 +88,7 @@ import LayoutStorage
 
     func applicationWillTerminate(_ notification: Notification) {
         operation?.cancel()
+        stopPickerWatch()
         cancelDrag()
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
@@ -402,6 +406,40 @@ import LayoutStorage
         window.makeFirstResponder(window)
         NSApp.activate()
         updatePickerPreview()
+        startPickerWatch(snapshot)
+    }
+
+    private func startPickerWatch(_ snapshot: WindowSnapshot) {
+        stopPickerWatch()
+        let token = Cancellation()
+        pickerWatchToken = token
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.pickerWatchToken === token, !self.pickerWatchChecking else { return }
+                self.pickerWatchChecking = true
+                defer { if self.pickerWatchToken === token { self.pickerWatchChecking = false } }
+                do {
+                    try await self.access.validateTarget(snapshot, cancellation: token)
+                } catch {
+                    guard !token.cancelled, self.pickerWatchToken === token else { return }
+                    let issue = error as? AccessFailure
+                    let showReport = self.diagnosticPicker
+                    self.dismissPicker(restoreFocus: false)
+                    if showReport { self.diagnostics.orderFront(nil) }
+                    self.record("Выбор зоны отменён: \(issue?.message ?? "целевое окно недоступно")")
+                }
+            }
+        }
+        pickerWatchTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func stopPickerWatch() {
+        pickerWatchToken?.cancel()
+        pickerWatchToken = nil
+        pickerWatchTimer?.invalidate()
+        pickerWatchTimer = nil
+        pickerWatchChecking = false
     }
 
     @objc private func pickerDisplayChanged() {
@@ -435,6 +473,7 @@ import LayoutStorage
     }
 
     private func dismissPicker(restoreFocus: Bool) {
+        stopPickerWatch()
         if restoreFocus, picker != nil, let snapshot = pickerSnapshot,
            NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
             NSRunningApplication(processIdentifier: snapshot.pid)?.activate(from: .current, options: [])
@@ -628,7 +667,7 @@ import LayoutStorage
                         return
                     }
                     // The baseline is now frozen; movement during capability checks is valid drag evidence.
-                    try await access.validateDragCandidate(snapshot, cancellation: token)
+                    try await access.validateTarget(snapshot, cancellation: token)
                     guard !token.cancelled, dragToken === token,
                           NSEvent.pressedMouseButtons & 1 != 0 else {
                         if dragToken === token { cancelDrag() }
