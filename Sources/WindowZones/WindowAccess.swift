@@ -174,15 +174,17 @@ actor WindowAccess {
         let role = try read(hit, kAXRoleAttribute, until: deadline, cancellation: cancellation) as? String
         // Only passive title surfaces may lead to a toolbar candidate, never controls or tabs.
         guard let role, DragStartSurface.allowsTraversal(role) else {
-            throw AccessFailure(status: "unsupported", message: "Начало жеста вне заголовка")
+            throw AccessFailure(status: "unsupported", message: "Начало жеста вне заголовка (\(role ?? "unknown"))")
         }
         var toolbar: AXUIElement?
+        var tabStrip: AXUIElement?
         var ancestor = hit
         var ancestorRole = role
         for _ in 0..<12 {
+            if ancestorRole == "AXTabGroup" { tabStrip = ancestor }
             if ancestorRole == "AXToolbar" { toolbar = ancestor; break }
             if ancestorRole == kAXWindowRole || ancestorRole == "AXTitleBar" { break }
-            guard DragStartSurface.allowsTraversal(ancestorRole) else {
+            guard DragStartSurface.allowsAncestorTraversal(ancestorRole) else {
                 throw AccessFailure(status: "unsupported", message: "Интерактивный элемент панели инструментов (\(ancestorRole))")
             }
             ancestor = try element(read(ancestor, kAXParentAttribute, until: deadline, cancellation: cancellation))
@@ -199,7 +201,20 @@ actor WindowAccess {
         }
         let initial = try frame(window, until: deadline, cancellation: cancellation)
         let toolbarFrame = try toolbar.map { try frame($0, until: deadline, cancellation: cancellation) }
-        guard DragStartSurface.contains(point, window: initial, role: role, toolbar: toolbarFrame) else {
+        var emptyTabStrip = false
+        if let tabStrip {
+            // Only gaps between tab children may start a window drag.
+            let children = try read(tabStrip, kAXChildrenAttribute, until: deadline, cancellation: cancellation) as? [AXUIElement]
+            guard let children, children.count <= 64 else {
+                throw AccessFailure(status: "unsupported", message: "Не удалось проверить свободное место среди вкладок")
+            }
+            let childFrames = try children.map { try frame($0, until: deadline, cancellation: cancellation) }
+            emptyTabStrip = DragStartSurface.isEmptyTabStrip(point, strip: try frame(tabStrip, until: deadline, cancellation: cancellation), children: childFrames)
+            guard emptyTabStrip else {
+                throw AccessFailure(status: "unsupported", message: "Начало жеста на вкладке или её кнопке")
+            }
+        }
+        guard DragStartSurface.contains(point, window: initial, role: role, toolbar: toolbarFrame, emptyTabStrip: emptyTabStrip) else {
             throw AccessFailure(status: "unsupported", message: "Неоднозначная область переноса (\(role), toolbar=\(toolbar != nil))")
         }
         return WindowSnapshot(reference: WindowReference(window), frame: initial, pid: pid)
