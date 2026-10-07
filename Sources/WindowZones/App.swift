@@ -51,6 +51,7 @@ import LayoutStorage
     private var fillRefreshTask: Task<Void, Never>?
     private var fillRefreshing = false
     private var fillScanSummary = ""
+    private var dragCaptureSummary = ""
     private var fillPrevious: [FillCandidate] = []
     private var dragEnabled = true
     private let dragBar = DragBar()
@@ -277,7 +278,7 @@ import LayoutStorage
     private func refreshReport() {
         guard reportView != nil else { return }
         let displays = Display.connected().map { "display \($0.id), scale \($0.scale), visible \(format($0.visible))" }.joined(separator: "\n")
-        reportView.string = "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)\nAccessibility: \(AXIsProcessTrusted() ? "разрешён" : "не разрешён")\nShortcut: \(shortcut) \(shortcutStatus)\nShift-drag: \(dragEnabled ? "включён" : "выключен")\n\(displays)\n\n" + fillScanSummary + "\n\n" + reports.joined(separator: "\n\n")
+        reportView.string = "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)\nAccessibility: \(AXIsProcessTrusted() ? "разрешён" : "не разрешён")\nShortcut: \(shortcut) \(shortcutStatus)\nShift-drag: \(dragEnabled ? "включён" : "выключен")\n\(displays)\n\n" + fillScanSummary + "\n" + dragCaptureSummary + "\n\n" + reports.joined(separator: "\n\n")
     }
     private func report(_ result: PlacementResult, context: String) {
         let steps = result.samples.map { "\($0.stage): \(format($0.frame))" }.joined(separator: "\n")
@@ -845,7 +846,11 @@ import LayoutStorage
                     guard !token.cancelled, dragToken === token, let now = axPointer(),
                           let targetApp = NSRunningApplication(processIdentifier: snapshot.pid), !targetApp.isTerminated,
                           hypot(now.x - point.x, now.y - point.y) <= 3 else {
-                        if dragToken === token { cancelDrag() }
+                        if dragToken === token {
+                            dragCaptureSummary = "Drag: baseline moved before capture"
+                            refreshReport()
+                            cancelDrag()
+                        }
                         return
                     }
                     // The baseline is now frozen; movement during capability checks is valid drag evidence.
@@ -855,13 +860,19 @@ import LayoutStorage
                         if dragToken === token { cancelDrag() }
                         return
                     }
+                    dragCaptureSummary = "Drag: captured"
+                    refreshReport()
                     dragSnapshot = snapshot
                     dragTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                         Task { @MainActor in self?.checkDrag() }
                     }
                     checkDrag()
                 } catch {
-                    if dragToken === token { cancelDrag() }
+                    if dragToken === token {
+                        dragCaptureSummary = "Drag: " + ((error as? AccessFailure)?.message ?? "capture cancelled")
+                        refreshReport()
+                        cancelDrag()
+                    }
                 }
             }
         } else if event.type == .flagsChanged {

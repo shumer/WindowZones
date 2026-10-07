@@ -13,6 +13,15 @@ struct DragStartSurfaceTests {
         #expect(DragStartSurface.contains(CGPoint(x: 600, y: 145), window: window, role: "AXGroup", toolbar: toolbar))
     }
 
+    @Test func acceptsPassiveWebTitleButNotWebContent() {
+        for role in ["AXGroup", "AXWebArea"] {
+            #expect(DragStartSurface.contains(CGPoint(x: 600, y: 120), window: window, role: role, toolbar: nil))
+            #expect(!DragStartSurface.contains(CGPoint(x: 600, y: 145), window: window, role: role, toolbar: nil))
+            #expect(!DragStartSurface.contains(CGPoint(x: 600, y: 300), window: window, role: role, toolbar: nil))
+            #expect(!DragStartSurface.contains(CGPoint(x: 101, y: 120), window: window, role: role, toolbar: nil))
+        }
+    }
+
     @Test func rejectsControlsContentTabsAndResizeEdges() {
         for role in ["AXButton", "AXTextField", "AXSearchField", "AXTabGroup", "AXRadioButton", "AXImage", "AXRow"] {
             #expect(!DragStartSurface.allowsTraversal(role))

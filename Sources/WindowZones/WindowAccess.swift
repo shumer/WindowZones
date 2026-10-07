@@ -179,11 +179,11 @@ actor WindowAccess {
         var toolbar: AXUIElement?
         var ancestor = hit
         var ancestorRole = role
-        for _ in 0..<6 {
+        for _ in 0..<12 {
             if ancestorRole == "AXToolbar" { toolbar = ancestor; break }
             if ancestorRole == kAXWindowRole || ancestorRole == "AXTitleBar" { break }
             guard DragStartSurface.allowsTraversal(ancestorRole) else {
-                throw AccessFailure(status: "unsupported", message: "Интерактивный элемент панели инструментов")
+                throw AccessFailure(status: "unsupported", message: "Интерактивный элемент панели инструментов (\(ancestorRole))")
             }
             ancestor = try element(read(ancestor, kAXParentAttribute, until: deadline, cancellation: cancellation))
             ancestorRole = try read(ancestor, kAXRoleAttribute, until: deadline, cancellation: cancellation) as? String ?? ""
@@ -200,7 +200,7 @@ actor WindowAccess {
         let initial = try frame(window, until: deadline, cancellation: cancellation)
         let toolbarFrame = try toolbar.map { try frame($0, until: deadline, cancellation: cancellation) }
         guard DragStartSurface.contains(point, window: initial, role: role, toolbar: toolbarFrame) else {
-            throw AccessFailure(status: "unsupported", message: "Неоднозначная область переноса")
+            throw AccessFailure(status: "unsupported", message: "Неоднозначная область переноса (\(role), toolbar=\(toolbar != nil))")
         }
         return WindowSnapshot(reference: WindowReference(window), frame: initial, pid: pid)
     }
