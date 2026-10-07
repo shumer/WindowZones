@@ -21,6 +21,12 @@ struct WindowSnapshot: Sendable {
     let pid: pid_t
 }
 
+struct FillCandidate: Sendable {
+    let id: UUID
+    let snapshot: WindowSnapshot
+    let title: String
+}
+
 struct FrameSample: Sendable {
     let stage: String
     let frame: CGRect
@@ -194,6 +200,35 @@ actor WindowAccess {
             throw AccessFailure(status: "unsupported", message: "Неоднозначная область переноса")
         }
         return WindowSnapshot(reference: WindowReference(window), frame: initial, pid: pid)
+    }
+
+    func fillCandidates(pids: [pid_t], area: CGRect, excluding: [WindowSnapshot],
+                        cancellation: Cancellation) async -> [FillCandidate] {
+        var result: [FillCandidate] = []
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        for pid in pids {
+            guard !cancellation.cancelled, ProcessInfo.processInfo.systemUptime < deadline else { break }
+            let app = AXUIElementCreateApplication(pid)
+            let appDeadline = min(deadline, ProcessInfo.processInfo.systemUptime + 0.3)
+            guard let windows = try? read(app, kAXWindowsAttribute, until: appDeadline, cancellation: cancellation) as? [AXUIElement] else { continue }
+            for window in windows.prefix(20) {
+                guard !cancellation.cancelled, ProcessInfo.processInfo.systemUptime < appDeadline else { break }
+                if excluding.contains(where: { CFEqual($0.reference.element, window) }) { continue }
+                if result.contains(where: { CFEqual($0.snapshot.reference.element, window) }) { continue }
+                do {
+                    try validate(window, until: appDeadline, cancellation: cancellation)
+                    let rect = try frame(window, until: appDeadline, cancellation: cancellation)
+                    let intersection = rect.intersection(area)
+                    guard !intersection.isNull, intersection.width * intersection.height > 0 else { continue }
+                    // Titles are transient UI labels and are never included in diagnostics.
+                    let title = (try? read(window, kAXTitleAttribute, until: appDeadline, cancellation: cancellation)) as? String ?? ""
+                    result.append(FillCandidate(id: UUID(), snapshot: WindowSnapshot(reference: WindowReference(window), frame: rect, pid: pid),
+                                                title: String(title.prefix(160))))
+                } catch { continue }
+            }
+            await Task.yield()
+        }
+        return result
     }
 
     func validateTarget(_ snapshot: WindowSnapshot, cancellation: Cancellation) throws {

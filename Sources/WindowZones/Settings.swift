@@ -7,6 +7,7 @@ import Sparkle
     private var window: NSWindow?
     private var login: NSButton!
     private var automatic: NSButton!
+    private var fill: NSButton!
     private var message: NSTextField!
     private var permission: NSTextField!
     private var updater: SPUStandardUpdaterController?
@@ -45,7 +46,7 @@ import Sparkle
     }
 
     private func makeWindow() {
-        let panel = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 490, height: 360), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let panel = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 490, height: 400), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         panel.title = "Настройки WindowZones"
         panel.isReleasedWhenClosed = false
         let root = NSStackView()
@@ -68,6 +69,8 @@ import Sparkle
         root.addArrangedSubview(login)
         automatic = NSButton(checkboxWithTitle: "Проверять обновления автоматически", target: self, action: #selector(changeAutomaticUpdates))
         root.addArrangedSubview(automatic)
+        fill = NSButton(checkboxWithTitle: "Предлагать заполнение остальных зон", target: self, action: #selector(changeFill))
+        root.addArrangedSubview(fill)
         root.addArrangedSubview(NSButton(title: "Проверить обновления…", target: self, action: #selector(checkForUpdates)))
         permission = NSTextField(wrappingLabelWithString: "")
         root.addArrangedSubview(permission)
@@ -84,6 +87,7 @@ import Sparkle
 
     @objc private func refresh() {
         guard window != nil else { return }
+        fill.state = (UserDefaults.standard.object(forKey: "fillAssistantEnabled") == nil || UserDefaults.standard.bool(forKey: "fillAssistantEnabled")) ? .on : .off
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         automatic.isEnabled = updater != nil
         automatic.state = updater?.updater.automaticallyChecksForUpdates == true ? .on : .off
@@ -95,6 +99,10 @@ import Sparkle
         } else {
             message.stringValue = "Проверка и установка обновлений выполняются через Sparkle."
         }
+    }
+
+    @objc private func changeFill() {
+        UserDefaults.standard.set(fill.state == .on, forKey: "fillAssistantEnabled")
     }
 
     @objc private func changeLogin() {

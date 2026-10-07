@@ -43,6 +43,11 @@ import LayoutStorage
     private let overlay = Overlay()
     private var globalMonitor: Any?
     private var localMonitor: Any?
+    private var fillAssistant: FillAssistant?
+    private var fillToken: Cancellation?
+    private var fillDisplays: [Display] = []
+    private var fillUsed: [WindowSnapshot] = []
+    private var fillLoadingID = UUID()
     private var dragEnabled = true
     private let dragBar = DragBar()
     private var dragBarInteraction = DragBarInteraction()
@@ -87,6 +92,7 @@ import LayoutStorage
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        closeFillAssistant()
         operation?.cancel()
         stopPickerWatch()
         cancelDrag()
@@ -313,6 +319,7 @@ import LayoutStorage
     }
 
     private func beginPicker(for app: NSRunningApplication, fromDiagnostics: Bool) {
+        closeFillAssistant()
         cancelPicker()
         cancelDrag()
         let token = Cancellation()
@@ -511,7 +518,7 @@ import LayoutStorage
         perform(snapshot, target: display.ax(zones[index]), display: display, isUndo: false, layoutID: layoutID, displayKey: displayKey)
     }
 
-    private func perform(_ snapshot: WindowSnapshot, target: CGRect, display: Display, isUndo: Bool, layoutID: UUID? = nil, displayKey: String? = nil) {
+    private func perform(_ snapshot: WindowSnapshot, target: CGRect, display: Display, isUndo: Bool, layoutID: UUID? = nil, displayKey: String? = nil, completion: ((Bool) -> Void)? = nil) {
         guard !busy else { return }
         busy = true
         operationDisplays = Display.connected()
@@ -549,10 +556,120 @@ import LayoutStorage
             }
             let appID = NSRunningApplication(processIdentifier: snapshot.pid)?.bundleIdentifier ?? "unavailable"
             report(result, context: "\(isUndo ? "Undo" : "Snap") [\(appID)]")
+            busy = false
+            if let completion { completion(result.succeeded && result.actual.map { GeometryEngine.close($0, target) } == true) }
+            else if !isUndo, result.succeeded, let actual = result.actual,
+                    GeometryEngine.close(actual, target) {
+                let layout = layoutID.flatMap { id in library.layouts.first { $0.id == id } } ?? activeLayout(for: display)
+                beginFillAssistant(layout: layout, display: display, target: target, placed: snapshot)
+            }
+        }
+    }
+
+    private func closeFillAssistant() {
+        guard fillToken != nil else { return }
+        fillToken?.cancel()
+        fillToken = nil
+        fillLoadingID = UUID()
+        fillAssistant?.close()
+        fillAssistant = nil
+        fillUsed = []
+        if busy { operation?.cancel() }
+    }
+
+    private func beginFillAssistant(layout: Layout, display: Display, target: CGRect, placed: WindowSnapshot) {
+        guard UserDefaults.standard.object(forKey: "fillAssistantEnabled") == nil || UserDefaults.standard.bool(forKey: "fillAssistantEnabled") else { return }
+        closeFillAssistant()
+        let zones = resolvedZones(layout, on: display)
+        guard let index = zones.firstIndex(where: { GeometryEngine.close(display.ax($0), target) }), zones.count > 1 else { return }
+        let token = Cancellation()
+        fillToken = token
+        fillDisplays = Display.connected()
+        fillUsed = [placed]
+        loadFillCandidates(layout: layout, display: display, initialIndex: index, token: token)
+    }
+
+    private func loadFillCandidates(layout: Layout, display: Display, initialIndex: Int, token: Cancellation) {
+        let request = UUID()
+        fillLoadingID = request
+        let apps = NSWorkspace.shared.runningApplications.filter {
+            $0.activationPolicy == .regular && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
+        }
+        let pids = apps.map(\.processIdentifier)
+        let used = fillUsed
+        Task {
+            let candidates = await access.fillCandidates(pids: pids, area: display.axVisible, excluding: used, cancellation: token)
+            guard !token.cancelled, fillToken === token, fillLoadingID == request,
+                  Display.compatible(fillDisplays, Display.connected()) else { return }
+            let zones = resolvedZones(layout, on: display)
+            // Limit suggestions to currently onscreen windows using public window metadata.
+            let visible = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+            let available = candidates.filter { candidate in
+                visible.contains { item in
+                    guard (item[kCGWindowOwnerPID as String] as? Int32) == candidate.snapshot.pid,
+                          (item[kCGWindowLayer as String] as? Int) == 0,
+                          let bounds = item[kCGWindowBounds as String] as? NSDictionary,
+                          let rect = CGRect(dictionaryRepresentation: bounds) else { return false }
+                    return GeometryEngine.close(rect, candidate.snapshot.frame)
+                }
+            }
+            if fillAssistant == nil {
+                var occupied: Set<Int> = [initialIndex]
+                for candidate in available {
+                    for (index, zone) in zones.enumerated() where GeometryEngine.close(candidate.snapshot.frame, display.ax(zone)) {
+                        occupied.insert(index)
+                    }
+                }
+                let panel = FillAssistant(zones: zones, area: display.visible, occupied: occupied)
+                guard !panel.isComplete else { closeFillAssistant(); return }
+                fillAssistant = panel
+                panel.onClose = { [weak self = self] in self?.closeFillAssistant() }
+                panel.onUndo = { [weak self = self] in self?.undoPlacement() }
+                panel.onRefresh = { [weak self = self] in
+                    self?.loadFillCandidates(layout: layout, display: display, initialIndex: initialIndex, token: token)
+                }
+                panel.onChoose = { [weak self = self, weak panel] candidate, index in
+                    guard let self, !token.cancelled, self.fillToken === token, zones.indices.contains(index),
+                          Display.compatible(self.fillDisplays, Display.connected()),
+                          let app = NSRunningApplication(processIdentifier: candidate.snapshot.pid), !app.isTerminated else {
+                        panel?.failed()
+                        return
+                    }
+                    self.fillLoadingID = UUID()
+                    panel?.panel.orderOut(nil)
+                    NSApp.yieldActivation(to: app)
+                    Task { [weak self, weak panel] in
+                        guard let self else { return }
+                        do {
+                            let frame = try await self.access.currentFrame(candidate.snapshot, cancellation: token)
+                            guard !token.cancelled, self.fillToken === token else { return }
+                            let snapshot = WindowSnapshot(reference: candidate.snapshot.reference, frame: frame, pid: candidate.snapshot.pid)
+                            self.perform(snapshot, target: display.ax(zones[index]), display: display, isUndo: false) { [weak self, weak panel] succeeded in
+                                guard let self, !token.cancelled, self.fillToken === token else { return }
+                                if succeeded {
+                                    self.fillUsed.append(snapshot)
+                                    panel?.placed(candidate.id)
+                                } else { panel?.failed() }
+                                if self.fillToken === token { panel?.setBusy(false); panel?.show() }
+                            }
+                        } catch {
+                            guard !token.cancelled else { return }
+                            panel?.failed()
+                            panel?.show()
+                        }
+                    }
+                }
+            }
+            let occupiedWindows = available.filter { candidate in
+                !zones.contains { GeometryEngine.close(candidate.snapshot.frame, display.ax($0)) }
+            }
+            fillAssistant?.update(occupiedWindows)
+            fillAssistant?.show()
         }
     }
 
     @objc private func undoPlacement() {
+        closeFillAssistant()
         guard !busy, let undo else { record("Нет доступной операции undo"); return }
         cancelPicker()
         cancelDrag()
@@ -573,6 +690,7 @@ import LayoutStorage
         let current = Display.connected()
         sessionLayouts = sessionLayouts.filter { id, _ in current.contains { $0.id == id } }
         var baselines: [[Display]] = []
+        if fillToken != nil { baselines.append(fillDisplays) }
         if picker != nil { baselines.append(pickerDisplays) }
         if dragToken != nil { baselines.append(dragDisplays) }
         if busy { baselines.append(operationDisplays) }
@@ -597,6 +715,7 @@ import LayoutStorage
     }
 
     private func cancelForContextChange(_ reason: String) {
+        closeFillAssistant()
         let hadInteraction = picker != nil || pickerCapture != nil || dragToken != nil || busy
         dismissPicker(restoreFocus: false)
         cancelDrag()
@@ -623,6 +742,7 @@ import LayoutStorage
                     if event.window === self?.diagnostics { self?.dismissPicker(restoreFocus: false) }
                 }
                 else if event.type == .keyDown && event.keyCode == 53 {
+                    self?.closeFillAssistant()
                     if self?.pickerCapture != nil { self?.cancelPicker() }
                     self?.cancelDrag()
                 }
@@ -643,11 +763,12 @@ import LayoutStorage
             return
         }
         if event.type == .keyDown, event.keyCode == 53 {
+            closeFillAssistant()
             if picker != nil || pickerCapture != nil { cancelPicker() }
             cancelDrag()
             return
         }
-        guard dragEnabled, libraryLoaded, !busy, picker == nil else { return }
+        guard dragEnabled, libraryLoaded, !busy, picker == nil, fillToken == nil else { return }
         if event.type == .keyDown {
             if event.keyCode == 53 { cancelDrag() }
             return
