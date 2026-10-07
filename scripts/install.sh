@@ -9,17 +9,30 @@ team_id="MW9955TT6R"
 installed="/Applications/$app_name.app"
 built="$PWD/build/$app_name.app"
 
-# Resolve the team's current certificate, including after certificate renewal.
-if [[ -z "${CODE_SIGN_IDENTITY:-}" ]]; then
-  CODE_SIGN_IDENTITY="$(security find-identity -v -p codesigning \
-    | awk -v team="($team_id)" '/Developer ID Application/ && index($0, team) { print $2; exit }')"
-fi
-[[ -n "$CODE_SIGN_IDENTITY" && "$CODE_SIGN_IDENTITY" != - ]] \
-  || { print -u2 "No Developer ID Application identity for team $team_id. Not building an ad-hoc copy."; exit 1; }
-export CODE_SIGN_IDENTITY
+# Release candidates must retain their original signature and notarization ticket.
+if [[ "${1:-}" == --release-app ]]; then
+  [[ $# -ge 2 ]] || { print -u2 "Expected an app path after --release-app."; exit 1; }
+  built="${2:A}"
+  shift 2
+  [[ -d "$built" && ! -L "$built" && "$built" != "$installed" ]] \
+    || { print -u2 "Expected a separate verified release bundle."; exit 1; }
+  codesign --verify --deep --strict "$built"
+  xcrun stapler validate "$built"
+  spctl --assess --type execute --verbose=2 "$built"
+else
+  # Resolve the team's current certificate, including after certificate renewal.
+  if [[ -z "${CODE_SIGN_IDENTITY:-}" ]]; then
+    CODE_SIGN_IDENTITY="$(security find-identity -v -p codesigning \
+      | awk -v team="($team_id)" '/Developer ID Application/ && index($0, team) { print $2; exit }')"
+  fi
+  [[ -n "$CODE_SIGN_IDENTITY" && "$CODE_SIGN_IDENTITY" != - ]] \
+    || { print -u2 "No Developer ID Application identity for team $team_id. Not building an ad-hoc copy."; exit 1; }
+  export CODE_SIGN_IDENTITY
 
-[[ "${SKIP_TESTS:-0}" == 1 ]] || ./scripts/test.sh
-./scripts/build.sh
+  [[ "${SKIP_TESTS:-0}" == 1 ]] || ./scripts/test.sh
+  ./scripts/build.sh
+
+fi
 
 # Verify the completed source before changing any installed files.
 codesign --verify --deep --strict "$built"
