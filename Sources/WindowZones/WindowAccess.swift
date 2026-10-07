@@ -40,6 +40,7 @@ struct PlacementResult: Sendable {
 struct AccessFailure: Error, Sendable {
     let status: String
     let message: String
+    var axCode: Int32? = nil
 }
 
 actor WindowAccess {
@@ -50,7 +51,7 @@ actor WindowAccess {
         case .attributeUnsupported, .notImplemented: status = "unsupported"
         default: status = "failed"
         }
-        return AccessFailure(status: status, message: "\(operation): AX error \(error.rawValue)")
+        return AccessFailure(status: status, message: "\(operation): AX error \(error.rawValue)", axCode: error.rawValue)
     }
 
     private func prepare(_ element: AXUIElement, until deadline: TimeInterval,
@@ -132,7 +133,21 @@ actor WindowAccess {
     func capture(pid: pid_t, cancellation: Cancellation) throws -> WindowSnapshot {
         let deadline = ProcessInfo.processInfo.systemUptime + 1
         let app = AXUIElementCreateApplication(pid)
-        let window = try element(read(app, kAXFocusedWindowAttribute, until: deadline, cancellation: cancellation))
+        let window: AXUIElement
+        do {
+            window = try element(read(app, kAXFocusedWindowAttribute, until: deadline, cancellation: cancellation))
+        } catch let issue as AccessFailure {
+            // Record only window availability, never window titles or contents.
+            guard !cancellation.cancelled, issue.status != "denied" else { throw issue }
+            let main = try? read(app, kAXMainWindowAttribute, until: deadline, cancellation: cancellation)
+            let windows = try? read(app, kAXWindowsAttribute, until: deadline, cancellation: cancellation)
+            let count = (windows as? [AXUIElement]).map { String($0.count) } ?? "unknown"
+            let unavailable = issue.axCode == AXError.noValue.rawValue
+            let explanation = unavailable ? "Приложение не предоставило активное окно. Открой обычное окно и повтори. " : ""
+            throw AccessFailure(status: unavailable ? "unsupported" : issue.status,
+                                message: "\(explanation)\(issue.message); AXMainWindow: \(main == nil ? "unavailable" : "available"); AXWindows count: \(count)",
+                                axCode: issue.axCode)
+        }
         try validate(window, until: deadline, cancellation: cancellation)
         return WindowSnapshot(reference: WindowReference(window),
                               frame: try frame(window, until: deadline, cancellation: cancellation), pid: pid)

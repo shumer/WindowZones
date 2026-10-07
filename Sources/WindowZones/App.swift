@@ -321,6 +321,16 @@ import LayoutStorage
                 if pickerCapture === token { pickerCapture = nil }
             }
             do {
+                guard !token.cancelled else { return }
+                if fromDiagnostics {
+                    // Match shortcut capture by activating the explicitly selected application first.
+                    app.activate(from: .current, options: [])
+                    try await Task.sleep(for: .milliseconds(150))
+                    guard !token.cancelled else { return }
+                    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+                        throw AccessFailure(status: "failed", message: "Выбранное приложение не стало активным. Захват окна отменён.")
+                    }
+                }
                 let snapshot = try await access.capture(pid: pid, cancellation: token)
                 guard !token.cancelled,
                       let targetApp = NSRunningApplication(processIdentifier: snapshot.pid), !targetApp.isTerminated else { return }
