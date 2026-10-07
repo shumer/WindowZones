@@ -163,8 +163,24 @@ actor WindowAccess {
         guard error == .success else { throw failure(error, operation: "hit test") }
         guard let hit else { throw AccessFailure(status: "failed", message: "hit test: пустой результат AX") }
         let role = try read(hit, kAXRoleAttribute, until: deadline, cancellation: cancellation) as? String
-        guard role == "AXTitleBar" || role == kAXWindowRole else {
+        // Only passive title surfaces may lead to a toolbar candidate, never controls or tabs.
+        guard let role, DragStartSurface.allowsTraversal(role) else {
             throw AccessFailure(status: "unsupported", message: "Начало жеста вне заголовка")
+        }
+        var toolbar: AXUIElement?
+        var ancestor = hit
+        var ancestorRole = role
+        for _ in 0..<6 {
+            if ancestorRole == "AXToolbar" { toolbar = ancestor; break }
+            if ancestorRole == kAXWindowRole || ancestorRole == "AXTitleBar" { break }
+            guard DragStartSurface.allowsTraversal(ancestorRole) else {
+                throw AccessFailure(status: "unsupported", message: "Интерактивный элемент панели инструментов")
+            }
+            ancestor = try element(read(ancestor, kAXParentAttribute, until: deadline, cancellation: cancellation))
+            ancestorRole = try read(ancestor, kAXRoleAttribute, until: deadline, cancellation: cancellation) as? String ?? ""
+        }
+        guard toolbar != nil || ancestorRole == kAXWindowRole || ancestorRole == "AXTitleBar" else {
+            throw AccessFailure(status: "unsupported", message: "Не удалось подтвердить область заголовка")
         }
         let window = role == kAXWindowRole ? hit : try element(read(hit, kAXWindowAttribute, until: deadline, cancellation: cancellation))
         var pid: pid_t = 0
@@ -173,8 +189,10 @@ actor WindowAccess {
             throw AccessFailure(status: "unsupported", message: "Собственное окно")
         }
         let initial = try frame(window, until: deadline, cancellation: cancellation)
-        let strip = CGRect(x: initial.minX + 16, y: initial.minY + 5, width: initial.width - 32, height: 27)
-        guard strip.contains(point) else { throw AccessFailure(status: "unsupported", message: "Неоднозначная область переноса") }
+        let toolbarFrame = try toolbar.map { try frame($0, until: deadline, cancellation: cancellation) }
+        guard DragStartSurface.contains(point, window: initial, role: role, toolbar: toolbarFrame) else {
+            throw AccessFailure(status: "unsupported", message: "Неоднозначная область переноса")
+        }
         return WindowSnapshot(reference: WindowReference(window), frame: initial, pid: pid)
     }
 
