@@ -75,7 +75,11 @@ import LayoutStorage
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { settings.show() }
+        // A reopen event may arrive while capture or placement temporarily hides the picker.
+        if !flag, !busy, picker == nil, dragToken == nil,
+           !NSApp.windows.contains(where: { $0.isVisible }) {
+            settings.show()
+        }
         return true
     }
 
