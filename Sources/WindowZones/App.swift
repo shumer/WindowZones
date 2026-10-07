@@ -50,6 +50,7 @@ import LayoutStorage
     private var fillLoadingID = UUID()
     private var fillRefreshTask: Task<Void, Never>?
     private var fillRefreshing = false
+    private var fillScanSummary = ""
     private var fillPrevious: [FillCandidate] = []
     private var dragEnabled = true
     private let dragBar = DragBar()
@@ -276,7 +277,7 @@ import LayoutStorage
     private func refreshReport() {
         guard reportView != nil else { return }
         let displays = Display.connected().map { "display \($0.id), scale \($0.scale), visible \(format($0.visible))" }.joined(separator: "\n")
-        reportView.string = "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)\nAccessibility: \(AXIsProcessTrusted() ? "разрешён" : "не разрешён")\nShortcut: \(shortcut) \(shortcutStatus)\nShift-drag: \(dragEnabled ? "включён" : "выключен")\n\(displays)\n\n" + reports.joined(separator: "\n\n")
+        reportView.string = "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)\nAccessibility: \(AXIsProcessTrusted() ? "разрешён" : "не разрешён")\nShortcut: \(shortcut) \(shortcutStatus)\nShift-drag: \(dragEnabled ? "включён" : "выключен")\n\(displays)\n\n" + fillScanSummary + "\n\n" + reports.joined(separator: "\n\n")
     }
     private func report(_ result: PlacementResult, context: String) {
         let steps = result.samples.map { "\($0.stage): \(format($0.frame))" }.joined(separator: "\n")
@@ -612,7 +613,16 @@ import LayoutStorage
         let apps = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
         }
-        let pids = apps.map(\.processIdentifier)
+        // Scan apps with visible windows first so background apps cannot exhaust the AX budget.
+        let metadata = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let visiblePIDs = Set(metadata.compactMap { item -> pid_t? in
+            guard (item[kCGWindowLayer as String] as? Int) == 0,
+                  let bounds = item[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds),
+                  rect.intersects(display.axVisible) else { return nil }
+            return item[kCGWindowOwnerPID as String] as? Int32
+        })
+        let pids = apps.map(\.processIdentifier).filter { visiblePIDs.contains($0) }
         let used = fillUsed
         Task {
             defer { fillRefreshing = false }
@@ -649,7 +659,12 @@ import LayoutStorage
                     }
                 }
                 let panel = FillAssistant(zones: zones, area: display.visible, occupied: occupied)
-                guard !panel.isComplete else { closeFillAssistant(); return }
+                guard !panel.isComplete else {
+                    fillScanSummary = "Заполнение: экран \(display.id), все \(zones.count) зоны заняты или перекрыты"
+                    refreshReport()
+                    closeFillAssistant()
+                    return
+                }
                 fillAssistant = panel
                 panel.onClose = { [weak self = self] in self?.closeFillAssistant() }
                 panel.onUndo = { [weak self = self] in self?.undoPlacement() }
@@ -691,6 +706,8 @@ import LayoutStorage
             let occupiedWindows = available.filter { candidate in
                 unusedIDs.contains(candidate.id) && !zones.contains { FillSession.accepts(actual: candidate.snapshot.frame, target: display.ax($0)) }
             }
+            fillScanSummary = "Заполнение: экран \(display.id), apps=\(pids.count), AX=\(candidates.count), visible=\(available.count), used=\(placedFrames.count), occupied=\(occupied.count)/\(zones.count), cards=\(occupiedWindows.count)"
+            refreshReport()
             fillAssistant?.reconcile(occupied: occupied)
             fillAssistant?.update(occupiedWindows)
             if !wasOpen { fillAssistant?.show() }
