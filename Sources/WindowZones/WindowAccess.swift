@@ -210,18 +210,20 @@ actor WindowAccess {
                         cancellation: Cancellation?) async throws -> CGRect {
         // Separate AX writes because an in-flight window animation can overwrite the previous frame.
         try prepare(window, until: deadline, cancellation: cancellation)
-        guard deadline - ProcessInfo.processInfo.systemUptime > 0.175 else {
+        guard deadline - ProcessInfo.processInfo.systemUptime > 0.25 else {
             throw AccessFailure(status: "failed", message: "Нет времени на проверку стабилизации frame")
         }
         try await Task.sleep(for: .milliseconds(150))
-        var previous = try frame(window, until: deadline, cancellation: cancellation)
-        for _ in 0..<3 {
+        var stability = FrameStability()
+        let initial = try frame(window, until: deadline, cancellation: cancellation)
+        _ = stability.observe(initial, at: ProcessInfo.processInfo.systemUptime)
+        while deadline - ProcessInfo.processInfo.systemUptime > 0.025 {
+            try prepare(window, until: deadline, cancellation: cancellation)
             try await Task.sleep(for: .milliseconds(25))
             let current = try frame(window, until: deadline, cancellation: cancellation)
-            if GeometryEngine.close(previous, current, tolerance: 0.5) { return current }
-            previous = current
+            if stability.observe(current, at: ProcessInfo.processInfo.systemUptime) { return current }
         }
-        throw AccessFailure(status: "failed", message: "Frame продолжает меняться после AX-записи")
+        throw AccessFailure(status: "failed", message: "Frame не стабилизировался в пределах бюджета AX")
     }
 
     func place(_ snapshot: WindowSnapshot, at target: CGRect, visibleArea: CGRect?, cancellation: Cancellation) async -> PlacementResult {
@@ -270,7 +272,7 @@ actor WindowAccess {
                 let requested = CGRect(origin: target.origin, size: measured.size)
                 let corrected = visibleArea.map { GeometryEngine.keepVisible(requested, in: $0) } ?? requested
                 if !GeometryEngine.close(measured, corrected),
-                   deadline - ProcessInfo.processInfo.systemUptime >= 0.25 {
+                   deadline - ProcessInfo.processInfo.systemUptime >= 0.35 {
                     stage = "final position correction"
                     try validate(window, until: deadline, cancellation: cancellation)
                     try writePosition(window, corrected.origin, until: deadline, cancellation: cancellation)
@@ -282,7 +284,7 @@ actor WindowAccess {
             // Retry once at the settled origin without looping on app size constraints.
             if let positioned = actual,
                abs(positioned.width - target.width) > 2 || abs(positioned.height - target.height) > 2,
-               deadline - ProcessInfo.processInfo.systemUptime >= 0.5 {
+               deadline - ProcessInfo.processInfo.systemUptime >= 0.65 {
                 stage = "settled size retry"
                 try validate(window, until: deadline, cancellation: cancellation)
                 try writeSize(window, target.size, until: deadline, cancellation: cancellation)
@@ -292,7 +294,7 @@ actor WindowAccess {
                     let requested = CGRect(origin: target.origin, size: resized.size)
                     let corrected = visibleArea.map { GeometryEngine.keepVisible(requested, in: $0) } ?? requested
                     if !GeometryEngine.close(resized, corrected),
-                       deadline - ProcessInfo.processInfo.systemUptime >= 0.25 {
+                       deadline - ProcessInfo.processInfo.systemUptime >= 0.35 {
                         stage = "retry position correction"
                         try validate(window, until: deadline, cancellation: cancellation)
                         try writePosition(window, corrected.origin, until: deadline, cancellation: cancellation)
@@ -349,7 +351,7 @@ actor WindowAccess {
                         samples.append(FrameSample(stage: "after rollback size", frame: recovered))
                     }
                     if (abs(recovered.minX - before.minX) > 2 || abs(recovered.minY - before.minY) > 2),
-                       recoveryDeadline - ProcessInfo.processInfo.systemUptime >= 0.25 {
+                       recoveryDeadline - ProcessInfo.processInfo.systemUptime >= 0.35 {
                         stage = "rollback final position"
                         try validate(window, until: recoveryDeadline, cancellation: cancellation)
                         try writePosition(window, before.origin, until: recoveryDeadline, cancellation: cancellation)
