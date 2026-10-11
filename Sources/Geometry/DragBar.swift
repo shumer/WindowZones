@@ -14,22 +14,24 @@ public struct DragBarGeometry: Sendable {
     public let retention: CGRect
     public let cells: [DragBarCell]
 
-    public init(layouts: [Layout], area: CGRect, scale: CGFloat) {
+    public init(layouts: [Layout], area: CGRect, scale: CGFloat, top: CGFloat? = nil) {
         let available = layouts.compactMap { layout -> (Layout, [CGRect])? in
             guard let zones = try? LayoutGeometry.zones(for: layout, in: area, scale: scale), !zones.isEmpty else { return nil }
             return (layout, zones.map(\.frame))
         }
         let count = max(1, available.count)
-        let width = min(area.width - 32, CGFloat(count) * 132 + 16)
-        frame = CGRect(x: area.midX - width / 2, y: area.maxY - 120, width: width, height: 96)
-        offer = CGRect(x: area.midX - 70, y: area.maxY - 44, width: 140, height: 24)
-        activation = CGRect(x: frame.minX, y: frame.minY - 20, width: frame.width, height: 120)
-        retention = frame.insetBy(dx: -24, dy: -40)
-        let cardWidth = (width - 16) / CGFloat(count)
+        let width = min(area.width - 32, CGFloat(count) * 132 + 32)
+        let anchor = min(area.maxY, top ?? area.maxY)
+        frame = CGRect(x: area.midX - width / 2, y: anchor - 104, width: width, height: 104)
+        let offerWidth = min(300, width * 0.65)
+        offer = CGRect(x: area.midX - offerWidth / 2, y: anchor - 16, width: offerWidth, height: 16)
+        activation = CGRect(x: frame.minX, y: anchor - 40, width: frame.width, height: 40)
+        retention = CGRect(x: frame.minX - 24, y: frame.minY - 32, width: frame.width + 48, height: frame.height + 32)
+        let cardWidth = (width - 32) / CGFloat(count)
         var result: [DragBarCell] = []
         for (index, entry) in available.enumerated() {
-            let card = CGRect(x: frame.minX + 12 + CGFloat(index) * cardWidth,
-                              y: frame.minY + 16, width: cardWidth - 8, height: 64)
+            let card = CGRect(x: frame.minX + 16 + CGFloat(index) * cardWidth,
+                              y: frame.minY + 18, width: cardWidth - 12, height: 68)
             for (zoneIndex, target) in entry.1.enumerated() {
                 let miniature = CGRect(x: card.minX + (target.minX - area.minX) / area.width * card.width,
                                        y: card.minY + (target.minY - area.minY) / area.height * card.height,

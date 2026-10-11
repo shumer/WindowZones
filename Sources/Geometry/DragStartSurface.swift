@@ -13,7 +13,7 @@ public enum DragStartSurface {
         allowsTraversal(role) || role == "AXScrollArea"
     }
 
-    public static func contains(_ point: CGPoint, window: CGRect, role: String, toolbar: CGRect?, emptyTabStrip: Bool = false) -> Bool {
+    public static func contains(_ point: CGPoint, window: CGRect, role: String, toolbar: CGRect?, emptyTabStrip: Bool = false, extendedWebTitle: Bool = false) -> Bool {
         guard allowsTraversal(role) else { return false }
         if role == "AXTabGroup" {
             let strip = CGRect(x: window.minX + 16, y: window.minY + 5,
@@ -23,6 +23,12 @@ public enum DragStartSurface {
         let title = CGRect(x: window.minX + 16, y: window.minY + 5,
                            width: max(0, window.width - 32), height: 27)
         if ["AXWindow", "AXTitleBar", "AXStaticText", "AXGroup", "AXWebArea"].contains(role), title.contains(point) { return true }
+        if extendedWebTitle && ["AXGroup", "AXWebArea"].contains(role) {
+            // Some web-based title bars span 64 points without exposing AXToolbar.
+            let webTitle = CGRect(x: window.minX + 16, y: window.minY + 5,
+                                  width: max(0, window.width - 32), height: 59)
+            if webTitle.contains(point) { return true }
+        }
         guard let toolbar else { return false }
         // Restrict unified toolbars to the top of the window, excluding content and resize edges.
         let header = CGRect(x: window.minX + 16, y: window.minY + 5,

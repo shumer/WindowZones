@@ -8,16 +8,27 @@ import Geometry
 
 @MainActor final class FillPanel: NSPanel {
     override var canBecomeKey: Bool { true }
-    var navigate: ((UInt16) -> Bool)?
+    var navigate: ((UInt16, Bool) -> Bool)?
     var dismiss: (() -> Void)?
     override func keyDown(with event: NSEvent) {
-        if navigate?(event.keyCode) != true { super.keyDown(with: event) }
+        if navigate?(event.keyCode, event.modifierFlags.contains(.shift)) != true { super.keyDown(with: event) }
     }
     override func cancelOperation(_ sender: Any?) { dismiss?() }
 }
 
 @MainActor final class FillCard: NSButton {
     override var isFlipped: Bool { false }
+    override var acceptsFirstResponder: Bool { isEnabled }
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        needsDisplay = true
+        return accepted
+    }
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        needsDisplay = true
+        return accepted
+    }
     var preview: NSImage? { didSet { needsDisplay = true } }
     var appIcon: NSImage?
     var appName = ""
@@ -35,10 +46,12 @@ import Geometry
     override func draw(_ dirtyRect: NSRect) {
         let selected = window?.firstResponder === self || hovered || isHighlighted
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 3, dy: 3), xRadius: 16, yRadius: 16)
-        NSColor.windowBackgroundColor.withAlphaComponent(selected ? 0.98 : 0.88).setFill()
+        let opaque = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        let contrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        NSColor.windowBackgroundColor.withAlphaComponent(opaque ? 1 : (selected ? 0.98 : 0.88)).setFill()
         shape.fill()
-        (selected ? NSColor.controlAccentColor : NSColor.separatorColor.withAlphaComponent(0.35)).setStroke()
-        shape.lineWidth = selected ? 3 : 1
+        (selected ? NSColor.controlAccentColor : (contrast ? NSColor.labelColor : NSColor.separatorColor.withAlphaComponent(0.35))).setStroke()
+        shape.lineWidth = selected ? 3 : (contrast ? 2 : 1)
         shape.stroke()
         let content = NSRect(x: 15, y: 49, width: bounds.width - 30, height: bounds.height - 65)
         if let image = preview ?? appIcon {
@@ -50,7 +63,7 @@ import Geometry
         appIcon?.draw(in: NSRect(x: 16, y: 17, width: 24, height: 24), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
-        let label = minimized ? "\(appName) · Свёрнуто" : appName
+        let label = minimized ? "\(appName) · \(L("Minimized"))" : appName
         (label as NSString).draw(in: NSRect(x: 48, y: 28, width: bounds.width - 64, height: 17), withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph])
         (windowName as NSString).draw(in: NSRect(x: 48, y: 11, width: bounds.width - 64, height: 16), withAttributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: paragraph])
     }
@@ -69,8 +82,8 @@ import Geometry
     private let scroll = NSScrollView()
     private let status = NSTextField(wrappingLabelWithString: "")
     private let root = FillBackdrop()
-    private let skipButton = NSButton(title: "Пропустить", target: nil, action: nil)
-    private let previewsButton = NSButton(title: "Разрешить миниатюры", target: nil, action: nil)
+    private let skipButton = KeyboardButton(title: L("Пропустить"), target: nil, action: nil)
+    private let previewsButton = KeyboardButton(title: L("Разрешить миниатюры"), target: nil, action: nil)
     private var occupied: Set<Int>
     private var session: FillSession
     private var candidates: [FillCandidate] = []
@@ -92,11 +105,11 @@ import Geometry
         session = FillSession(count: zones.count, occupied: occupied)
         panel = FillPanel(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
         super.init()
-        panel.title = "Выбор окна для свободной зоны"
+        panel.title = L("Выбор окна для свободной зоны")
         panel.setAccessibilityElement(true)
         panel.setAccessibilityRole(.window)
         panel.setAccessibilitySubrole(.dialog)
-        panel.setAccessibilityLabel("Выбор окна для свободной зоны")
+        panel.setAccessibilityLabel(L("Выбор окна для свободной зоны"))
         panel.isReleasedWhenClosed = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -105,7 +118,7 @@ import Geometry
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.moveToActiveSpace]
         panel.delegate = self
-        panel.navigate = { [weak self] in self?.navigate($0) ?? false }
+        panel.navigate = { [weak self] in self?.navigate($0, backwards: $1) ?? false }
         panel.dismiss = { [weak self] in self?.onClose?() }
         root.dismiss = { [weak self] in self?.onClose?() }
         root.material = .hudWindow
@@ -213,11 +226,11 @@ import Geometry
                 let button = FillCard(title: "", target: self, action: #selector(choose(_:)))
                 button.identifier = NSUserInterfaceItemIdentifier(candidate.id.uuidString)
                 button.appIcon = app?.icon
-                button.appName = app?.localizedName ?? "Приложение"
+                button.appName = app?.localizedName ?? L("Приложение")
                 button.windowName = candidate.title
                 button.minimized = candidate.minimized
                 button.isBordered = false
-                button.setAccessibilityLabel("\(button.appName), \(candidate.title)\(candidate.minimized ? ", свёрнуто" : "")")
+                button.setAccessibilityLabel("\(button.appName), \(candidate.title)\(candidate.minimized ? ", " + L("Minimized") : "")")
                 button.widthAnchor.constraint(equalToConstant: width).isActive = true
                 button.heightAnchor.constraint(equalToConstant: cardHeight).isActive = true
                 buttons[candidate.id] = button
@@ -241,16 +254,31 @@ import Geometry
 
     func failed() {
         setBusy(false)
-        failureMessage = "Окно недоступно или не помещается. Выбери другое. Отмена размещения доступна в меню."
+        failureMessage = L("Окно недоступно или не помещается. Выбери другое. Отмена размещения доступна в меню.")
         updateStatus()
     }
 
     private func updateStatus() {
-        status.stringValue = failureMessage ?? (candidates.isEmpty ? "Нет доступных окон. Список обновляется автоматически." : "Выбери окно · Зона \((session.selected ?? 0) + 1) · Esc для выхода")
+        status.stringValue = failureMessage ?? (candidates.isEmpty ? L("Нет доступных окон. Список обновляется автоматически.") : LF("Choose a window · Zone %d · Esc to close", (session.selected ?? 0) + 1))
     }
 
-    private func navigate(_ key: UInt16) -> Bool {
+    private func navigate(_ key: UInt16, backwards: Bool) -> Bool {
+        if key == 48 {
+            let controls: [NSButton] = candidates.compactMap { buttons[$0.id] } + [skipButton, previewsButton]
+            let available = controls.filter { $0.isEnabled && !$0.isHiddenOrHasHiddenAncestor }
+            guard !available.isEmpty else { return true }
+            let current = available.firstIndex { $0 === panel.firstResponder }
+            let next = current.map { ($0 + (backwards ? -1 : 1) + available.count) % available.count }
+                ?? (backwards ? available.count - 1 : 0)
+            panel.makeFirstResponder(available[next])
+            available[next].scrollToVisible(available[next].bounds)
+            return true
+        }
         guard !isBusy, !candidates.isEmpty else { return false }
+        if key == 36 || key == 49 {
+            if panel.firstResponder === skipButton { skip(); return true }
+            if panel.firstResponder === previewsButton { allowPreviews(); return true }
+        }
         let current = buttons.first { $0.value === panel.firstResponder }?.key ?? focusedID
         let index = candidates.firstIndex { $0.id == current } ?? 0
         if key == 36 || key == 49 {
@@ -290,7 +318,7 @@ import Geometry
     @objc private func allowPreviews() {
         _ = CGRequestScreenCaptureAccess()
         if CGPreflightScreenCaptureAccess() { previewsButton.isHidden = true; loadPreviews() }
-        else { status.stringValue = "Разреши запись экрана для миниатюр. Пока доступны иконки." }
+        else { status.stringValue = L("Разреши запись экрана для миниатюр. Пока доступны иконки.") }
     }
 
     private func loadPreviews() {

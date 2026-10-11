@@ -5,15 +5,16 @@ import Testing
 
 struct BuiltInLayoutsTests {
     @Test func presetsHaveStableDistinctIdentitiesAndExpectedZoneCounts() throws {
-        #expect(BuiltInLayouts.all.map(\.id) == [
+        #expect(BuiltInLayouts.landscape.map(\.id) == [
             UUID(uuidString: "575A0000-0000-4000-8000-000000000001")!,
-            UUID(uuidString: "575A0000-0000-4000-8000-000000000005")!,
+            UUID(uuidString: "575A0000-0000-4000-8000-000000000008")!,
             UUID(uuidString: "575A0000-0000-4000-8000-000000000002")!,
-            UUID(uuidString: "575A0000-0000-4000-8000-000000000006")!,
-            UUID(uuidString: "575A0000-0000-4000-8000-000000000007")!
+            UUID(uuidString: "575A0000-0000-4000-8000-000000000009")!,
+            UUID(uuidString: "575A0000-0000-4000-8000-000000000007")!,
+            UUID(uuidString: "575A0000-0000-4000-8000-000000000003")!
         ])
         var ids = Set<UUID>()
-        for (layout, count) in zip(BuiltInLayouts.all, [2, 2, 3, 2, 4]) {
+        for (layout, count) in zip(BuiltInLayouts.landscape, [2, 2, 3, 3, 4, 3]) {
             for scale: CGFloat in [1, 2] {
                 let zones = try LayoutGeometry.zones(for: layout,
                     in: CGRect(x: -1512, y: 458, width: 1512, height: 949), scale: scale)
@@ -27,12 +28,28 @@ struct BuiltInLayoutsTests {
         }
     }
 
+    @Test func adaptivePresetsUseLogicalWidthAndOrientation() throws {
+        #expect(BuiltInLayouts.suggested(in: CGRect(x: 0, y: 0, width: 1439, height: 900)).count == 4)
+        #expect(BuiltInLayouts.suggested(in: CGRect(x: -2000, y: 300, width: 1440, height: 960)) == BuiltInLayouts.landscape)
+        #expect(BuiltInLayouts.suggested(in: CGRect(x: 0, y: 0, width: 1440, height: 961)).count == 4)
+        #expect(BuiltInLayouts.suggested(in: CGRect(x: 0, y: 0, width: 1000, height: 1000)).count == 4)
+        #expect(BuiltInLayouts.suggested(in: CGRect(x: 0, y: 0, width: 900, height: 1440)) == [BuiltInLayouts.rows, BuiltInLayouts.threeRows, BuiltInLayouts.quarters])
+        let layout = Layout(name: "Rows", root: BuiltInLayouts.threeRows.root, inset: 0, gap: 0)
+        let zones = try LayoutGeometry.zones(for: layout, in: CGRect(x: 0, y: 0, width: 900, height: 1500), scale: 2)
+        #expect(zones.map(\.frame.minY) == [1000, 500, 0])
+        #expect(zones.map(\.frame.height) == [500, 500, 500])
+    }
+
     @Test func newPresetsHaveRequestedAreasAndReadingOrder() throws {
         let area = CGRect(x: 0, y: 0, width: 1600, height: 800)
         func frames(_ preset: Layout) throws -> [CGRect] {
             try LayoutGeometry.zones(for: Layout(name: preset.name, root: preset.root, inset: 0, gap: 0),
                                      in: area, scale: 2).map(\.frame)
         }
+        #expect(try frames(BuiltInLayouts.leftHalfRightStack) == [CGRect(x: 0, y: 0, width: 800, height: 800),
+            CGRect(x: 800, y: 400, width: 800, height: 400), CGRect(x: 800, y: 0, width: 800, height: 400)])
+        let wide = Layout(name: "Wide", root: BuiltInLayouts.twoThirdsLeft.root, inset: 0, gap: 0)
+        #expect(try LayoutGeometry.zones(for: wide, in: CGRect(x: 0, y: 0, width: 1800, height: 900), scale: 2).map(\.frame.width) == [1200, 600])
         #expect(try frames(BuiltInLayouts.wideLeft).map(\.width) == [1200, 400])
         #expect(try frames(BuiltInLayouts.rows) == [CGRect(x: 0, y: 400, width: 1600, height: 400),
                                                  CGRect(x: 0, y: 0, width: 1600, height: 400)])

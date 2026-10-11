@@ -21,11 +21,16 @@ public struct LayoutCollection: Sendable, Equatable {
     }
 
     public func upgradingStandardPresets() -> LayoutCollection {
-        // Only replace the untouched legacy library, preserving all custom libraries.
-        guard layouts == BuiltInLayouts.legacy else { return self }
+        // Only replace the untouched standard libraries, preserving all custom libraries.
+        guard layouts == BuiltInLayouts.legacy || layouts == BuiltInLayouts.previousStandard || layouts == BuiltInLayouts.landscape else { return self }
         let retained = Set(BuiltInLayouts.all.map(\.id))
         let active = activeByDisplay.mapValues { retained.contains($0) ? $0 : BuiltInLayouts.halves.id }
         return LayoutCollection(layouts: BuiltInLayouts.all, activeByDisplay: active)
+    }
+
+    public func suggestedLayouts(in area: CGRect) -> [Layout] {
+        // Custom libraries retain their content and order on every display.
+        layouts == BuiltInLayouts.all ? BuiltInLayouts.suggested(in: area) : layouts
     }
 
     public func validate() throws {

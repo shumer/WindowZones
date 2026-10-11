@@ -53,7 +53,15 @@ import LayoutStorage
     private var fillScanSummary = ""
     private var dragCaptureSummary = ""
     private var fillPrevious: [FillCandidate] = []
-    private var dragEnabled = true
+    private let preferences = Preferences()
+    private var dragEnabled: Bool { preferences.dragEnabled }
+    private var dragModifier: NSEvent.ModifierFlags {
+        switch preferences.dragModifier {
+        case .shift: return .shift
+        case .option: return .option
+        case .control: return .control
+        }
+    }
     private let dragBar = DragBar()
     private var dragBarInteraction = DragBarInteraction()
     private var dragMenuItem: NSMenuItem!
@@ -62,7 +70,7 @@ import LayoutStorage
     private var dragStart = CGPoint.zero
     private var dragDisplays: [Display] = []
     private var dragRecognition = DragRecognition()
-    private var dragHadShift = false
+    private var dragHadModifier = false
     private var dragChecking = false
     private var dragTimer: Timer?
 
@@ -73,14 +81,20 @@ import LayoutStorage
         makeMenu()
         makeDiagnostics()
         loadLayouts()
-        installHotkey(option: true)
+        installHotkey(option: preferences.shortcut == .controlOptionSpace)
+        settings.onChange = { [weak self] in self?.preferencesChanged() }
+        settings.shortcutStatus = { [weak self] in self?.shortcutStatus ?? "" }
         installMonitors()
         NotificationCenter.default.addObserver(self, selector: #selector(screenChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(contextChanged), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(contextChanged), name: NSWorkspace.willSleepNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(targetApplicationTerminated), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
-        record("Запуск: чужие окна не изменялись. Перетаскивание вверх и Shift-drag включены.")
-        if !AXIsProcessTrusted() { settings.show() }
+        record("Startup: no windows changed.")
+        if !AXIsProcessTrusted() || !UserDefaults.standard.bool(forKey: "hasSeenSettingsIntroduction") {
+            settings.show()
+            UserDefaults.standard.set(true, forKey: "hasSeenSettingsIntroduction")
+        }
+        if CommandLine.arguments.contains("--settings") { settings.show() }
         if CommandLine.arguments.contains("--diagnostics") { showDiagnostics() }
         if CommandLine.arguments.contains("--smoke") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { NSApp.terminate(nil) }
@@ -117,10 +131,10 @@ import LayoutStorage
                 if upgraded != loaded.collection { try await store.save(upgraded) }
                 library = upgraded
                 layoutStore = store
-                if loaded.source == .backup { libraryWarning = "Восстановлено из копии" }
+                if loaded.source == .backup { libraryWarning = L("Восстановлено из копии") }
             } catch {
-                libraryWarning = "Сохранение недоступно"
-                record("Хранилище раскладок недоступно. Встроенные варианты работают без записи файлов.")
+                libraryWarning = L("Сохранение недоступно")
+                record(L("Хранилище раскладок недоступно. Встроенные варианты работают без записи файлов."))
             }
         }
     }
@@ -128,9 +142,8 @@ import LayoutStorage
     private func activeLayout(for display: Display) -> Layout {
         let key = display.uniqueStorageKey(in: Display.connected())
         let id = sessionLayouts[display.id] ?? key.flatMap { library.activeByDisplay[$0] }
-        return library.layouts.first { $0.id == id }
-            ?? library.layouts.first { $0.id == BuiltInLayouts.halves.id }
-            ?? library.layouts[0]
+        let suggested = library.suggestedLayouts(in: display.visible)
+        return suggested.first { $0.id == id } ?? suggested[0]
     }
 
     private func resolvedZones(_ layout: Layout, on display: Display) -> [CGRect] {
@@ -143,7 +156,7 @@ import LayoutStorage
 
     private func saveActiveLayout(_ id: UUID, displayKey: String?) async {
         guard let displayKey, let layoutStore else {
-            record("Раскладка выбрана для текущего сеанса, постоянное сохранение недоступно.")
+            record(L("Раскладка выбрана для текущего сеанса, постоянное сохранение недоступно."))
             return
         }
         do {
@@ -152,8 +165,8 @@ import LayoutStorage
             library = updated
             libraryWarning = nil
         } catch {
-            libraryWarning = "Выбор не сохранён"
-            record("Окно размещено, но выбор раскладки не сохранён. Текущий выбор действует до завершения сеанса.")
+            libraryWarning = L("Выбор не сохранён")
+            record(L("Окно размещено, но выбор раскладки не сохранён. Текущий выбор действует до завершения сеанса."))
         }
     }
 
@@ -170,17 +183,17 @@ import LayoutStorage
             menu.addItem(item)
             return item
         }
-        _ = add("Выбрать зону для активного окна", #selector(pick))
-        _ = add("Отменить последнее размещение", #selector(undoPlacement))
+        _ = add(L("Выбрать зону для активного окна"), #selector(pick))
+        _ = add(L("Отменить последнее размещение"), #selector(undoPlacement))
         menu.addItem(.separator())
-        dragMenuItem = add("Перетаскивание: верхняя полоска и Shift", #selector(toggleDrag))
+        dragMenuItem = add(L("Перетаскивание окон"), #selector(toggleDrag))
         dragMenuItem.state = dragEnabled ? .on : .off
-        _ = add("Сменить shortcut: Ctrl+Shift / Ctrl+Option + Space", #selector(changeShortcut))
-        _ = add("Настройки…", #selector(showSettings))
-        _ = add("Проверить обновления…", #selector(checkUpdates))
-        _ = add("Диагностика и разрешение", #selector(showDiagnostics))
+        _ = add(L("Сменить shortcut: Ctrl+Shift / Ctrl+Option + Space"), #selector(changeShortcut))
+        _ = add(L("Настройки…"), #selector(showSettings))
+        _ = add(L("Проверить обновления…"), #selector(checkUpdates))
+        _ = add(L("Диагностика и разрешение"), #selector(showDiagnostics))
         menu.addItem(.separator())
-        _ = add("Завершить WindowZones", #selector(quit))
+        _ = add(L("Завершить WindowZones"), #selector(quit))
         statusItem.menu = menu
     }
 
@@ -188,24 +201,24 @@ import LayoutStorage
 
     private func makeDiagnostics() {
         diagnostics = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 600), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        diagnostics.title = "WindowZones: этап 0"
+        diagnostics.title = L("WindowZones: этап 0")
         diagnostics.isReleasedWhenClosed = false
         let stack = verticalStack()
-        stack.addArrangedSubview(NSTextField(wrappingLabelWithString: "Accessibility нужен для перемещения и изменения размера выбранного окна. Разрешение выдаётся вручную. Содержимое окон и нажатые клавиши не сохраняются."))
+        stack.addArrangedSubview(NSTextField(wrappingLabelWithString: L("Accessibility нужен для перемещения и изменения размера выбранного окна. Разрешение выдаётся вручную. Содержимое окон и нажатые клавиши не сохраняются.")))
         let buttons = NSStackView()
-        for (title, action) in [("Открыть Accessibility", #selector(openPermissions)), ("Обновить статус", #selector(refreshPermissions)), ("Отменить размещение", #selector(undoPlacement))] {
+        for (title, action) in [(L("Открыть Accessibility"), #selector(openPermissions)), (L("Обновить статус"), #selector(refreshPermissions)), (L("Отменить размещение"), #selector(undoPlacement))] {
             buttons.addArrangedSubview(NSButton(title: title, target: self, action: action))
         }
         stack.addArrangedSubview(buttons)
         let testRow = NSStackView()
         testRow.spacing = 8
         testApplication = NSPopUpButton()
-        testApplication.setAccessibilityLabel("Приложение для проверки окна")
+        testApplication.setAccessibilityLabel(L("Приложение для проверки окна"))
         testRow.addArrangedSubview(testApplication)
-        testRow.addArrangedSubview(NSButton(title: "Обновить список", target: self, action: #selector(refreshTestApplications)))
-        testRow.addArrangedSubview(NSButton(title: "Открыть выбор зон", target: self, action: #selector(pickTestApplication)))
+        testRow.addArrangedSubview(NSButton(title: L("Обновить список"), target: self, action: #selector(refreshTestApplications)))
+        testRow.addArrangedSubview(NSButton(title: L("Открыть выбор зон"), target: self, action: #selector(pickTestApplication)))
         stack.addArrangedSubview(testRow)
-        stack.addArrangedSubview(NSTextField(wrappingLabelWithString: "Проверка: выбери запущенное приложение. Панель откроется для его активного обычного окна. До выбора зоны окно не перемещается."))
+        stack.addArrangedSubview(NSTextField(wrappingLabelWithString: L("Проверка: выбери запущенное приложение. Панель откроется для его активного обычного окна. До выбора зоны окно не перемещается.")))
         refreshTestApplications()
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
@@ -231,7 +244,7 @@ import LayoutStorage
         }.sorted { ($0.localizedName ?? "").localizedCaseInsensitiveCompare($1.localizedName ?? "") == .orderedAscending }
         testApplication.removeAllItems()
         for app in testApplications {
-            testApplication.addItem(withTitle: app.localizedName ?? app.bundleIdentifier ?? "Приложение")
+            testApplication.addItem(withTitle: app.localizedName ?? app.bundleIdentifier ?? L("Приложение"))
             testApplication.lastItem?.representedObject = app.processIdentifier
         }
         if let index = testApplications.firstIndex(where: { $0.processIdentifier == previousPID }) {
@@ -243,10 +256,10 @@ import LayoutStorage
     }
 
     @objc private func pickTestApplication() {
-        guard libraryLoaded, !busy else { record("Дождись завершения текущей операции"); return }
+        guard libraryLoaded, !busy else { record(L("Дождись завершения текущей операции")); return }
         guard let pid = testApplication.selectedItem?.representedObject as? Int32,
               let app = testApplications.first(where: { $0.processIdentifier == pid }), !app.isTerminated else {
-            record("Выбранное приложение недоступно. Обнови список.")
+            record(L("Выбранное приложение недоступно. Обнови список."))
             return
         }
         beginPicker(for: app, fromDiagnostics: true)
@@ -273,13 +286,13 @@ import LayoutStorage
         refreshReport()
     }
     private func format(_ frame: CGRect?) -> String {
-        guard let frame else { return "нет" }
+        guard let frame else { return L("нет") }
         return String(format: "x=%.1f y=%.1f w=%.1f h=%.1f", frame.minX, frame.minY, frame.width, frame.height)
     }
     private func refreshReport() {
         guard reportView != nil else { return }
         let displays = Display.connected().map { "display \($0.id), scale \($0.scale), visible \(format($0.visible))" }.joined(separator: "\n")
-        reportView.string = "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)\nAccessibility: \(AXIsProcessTrusted() ? "разрешён" : "не разрешён")\nShortcut: \(shortcut) \(shortcutStatus)\nShift-drag: \(dragEnabled ? "включён" : "выключен")\n\(displays)\n\n" + fillScanSummary + "\n" + dragCaptureSummary + "\n\n" + reports.joined(separator: "\n\n")
+        reportView.string = "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)\nAccessibility: \(AXIsProcessTrusted() ? L("разрешён") : L("не разрешён"))\nShortcut: \(shortcut) \(shortcutStatus)\nDrag (\(preferences.dragModifier.rawValue)): \(dragEnabled ? L("включён") : L("выключен"))\n\(displays)\n\n" + fillScanSummary + "\n" + dragCaptureSummary + "\n\n" + reports.joined(separator: "\n\n")
     }
     private func report(_ result: PlacementResult, context: String) {
         let steps = result.samples.map { "\($0.stage): \(format($0.frame))" }.joined(separator: "\n")
@@ -292,39 +305,43 @@ import LayoutStorage
             var event = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
             let handlerStatus = InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
                 Task { @MainActor in
-                    AppController.instance?.record("Получена команда shortcut")
+                    AppController.instance?.record(L("Получена команда shortcut"))
                     AppController.instance?.pick()
                 }
                 return noErr
             }, 1, &event, nil, &handler)
             guard handlerStatus == noErr else {
-                shortcutStatus = "обработчик недоступен: \(handlerStatus)"
+                shortcutStatus = LF("Shortcut unavailable (error %d). Choose another combination.", handlerStatus)
                 return
             }
         }
         let modifiers = UInt32(controlKey | (option ? optionKey : shiftKey))
         let result = RegisterEventHotKey(UInt32(kVK_Space), modifiers, EventHotKeyID(signature: 0x575A3030, id: 1), GetApplicationEventTarget(), 0, &hotkey)
         shortcut = option ? "Control+Option+Space" : "Control+Shift+Space"
-        shortcutStatus = result == noErr ? "зарегистрирован" : "конфликт или ошибка \(result); выбери другое сочетание в меню"
+        shortcutStatus = result == noErr ? L("Shortcut is registered.") : LF("Shortcut unavailable (error %d). Choose another combination.", result)
     }
     @objc private func changeShortcut() {
-        installHotkey(option: shortcut == "Control+Shift+Space")
+        preferences.shortcut = preferences.shortcut == .controlOptionSpace ? .controlShiftSpace : .controlOptionSpace
+        preferencesChanged()
         refreshReport()
     }
 
     @objc func pick() {
-        guard libraryLoaded else { record("Раскладки ещё загружаются"); return }
-        guard !busy else { record("Команда отклонена: предыдущая операция ещё выполняется"); return }
+        guard AXIsProcessTrusted() else { settings.show(); return }
+        guard libraryLoaded else { record(L("Раскладки ещё загружаются")); return }
+        guard !busy else { record(L("Команда отклонена: предыдущая операция ещё выполняется")); return }
         if picker != nil { cancelPicker(); return }
         guard let app = NSWorkspace.shared.frontmostApplication,
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
-            record("Сначала активируй чужое обычное окно, затем нажми \(shortcut).")
+            record(LF("Activate an ordinary app window, then press %@.", shortcut))
             return
         }
         beginPicker(for: app, fromDiagnostics: false)
     }
 
     private func beginPicker(for app: NSRunningApplication, fromDiagnostics: Bool) {
+        guard AXIsProcessTrusted() else { settings.show(); return }
+        guard !preferences.excludes(app.bundleIdentifier) else { NSSound.beep(); return }
         closeFillAssistant()
         cancelPicker()
         cancelDrag()
@@ -337,7 +354,7 @@ import LayoutStorage
         busy = true
         let pid = app.processIdentifier
         operationPID = pid
-        record("Выбор окна приложения: \(app.bundleIdentifier ?? "unknown")")
+        record(LF("Selecting app window: %@", app.bundleIdentifier ?? "unknown"))
         Task {
             defer {
                 busy = false
@@ -352,7 +369,7 @@ import LayoutStorage
                     try await Task.sleep(for: .milliseconds(150))
                     guard !token.cancelled else { return }
                     guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
-                        throw AccessFailure(status: "failed", message: "Выбранное приложение не стало активным. Захват окна отменён.")
+                        throw AccessFailure(status: "failed", message: L("Выбранное приложение не стало активным. Захват окна отменён."))
                     }
                 }
                 let snapshot = try await access.capture(pid: pid, cancellation: token)
@@ -368,21 +385,21 @@ import LayoutStorage
 
     private func recordAccessError(_ error: Error) {
         let issue = error as? AccessFailure
-        record("\(issue?.status ?? "failed"): \(issue?.message ?? "Ошибка AX")")
+        record("\(issue?.status ?? "failed"): \(issue?.message ?? L("Ошибка AX"))")
         showDiagnostics()
     }
 
     private func showPicker(_ snapshot: WindowSnapshot) {
         pickerDisplays = Display.connected()
-        guard !pickerDisplays.isEmpty else { record("Нет доступного экрана"); return }
+        guard !pickerDisplays.isEmpty else { record(L("Нет доступного экрана")); return }
         let window = PickerWindow(contentRect: CGRect(x: 0, y: 0, width: 520, height: 520), styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Разместить выбранное окно"
+        window.title = L("Разместить выбранное окно")
         window.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         window.isReleasedWhenClosed = false
         window.delegate = self
-        let content = ZonePickerContent(applicationName: NSRunningApplication(processIdentifier: snapshot.pid)?.localizedName ?? "Приложение", layouts: library.layouts)
+        let content = ZonePickerContent(applicationName: NSRunningApplication(processIdentifier: snapshot.pid)?.localizedName ?? L("Приложение"), layouts: library.layouts)
         let popup = content.displayPopup
-        for (index, display) in pickerDisplays.enumerated() { popup.addItem(withTitle: "Экран \(index + 1): \(Int(display.visible.width)) × \(Int(display.visible.height))") }
+        for (index, display) in pickerDisplays.enumerated() { popup.addItem(withTitle: LF("Display %d: %d × %d", index + 1, Int(display.visible.width), Int(display.visible.height))) }
         let selected = pickerDisplays.indices.max { a, b in
             let lhs = pickerDisplays[a].axVisible.intersection(snapshot.frame)
             let rhs = pickerDisplays[b].axVisible.intersection(snapshot.frame)
@@ -442,7 +459,7 @@ import LayoutStorage
                     let showReport = self.diagnosticPicker
                     self.dismissPicker(restoreFocus: false)
                     if showReport { self.diagnostics.orderFront(nil) }
-                    self.record("Выбор зоны отменён: \(issue?.message ?? "целевое окно недоступно")")
+                    self.record(LF("Zone selection cancelled: %@", issue?.message ?? L("целевое окно недоступно")))
                 }
             }
         }
@@ -473,11 +490,12 @@ import LayoutStorage
     @objc private func updatePickerPreview() {
         guard let popup = pickerDisplay, pickerDisplays.indices.contains(popup.indexOfSelectedItem), let picker else { return }
         let display = pickerDisplays[popup.indexOfSelectedItem]
+        pickerContent?.setLayouts(library.suggestedLayouts(in: display.visible))
         let zones = pickerZones(on: display)
         picker.zoneCount = zones.count
         picker.selected = min(max(0, picker.selected), max(0, zones.count - 1))
-        let name = library.layouts.first { $0.id == pickerLayoutID }?.name ?? "Раскладка"
-        pickerHint?.stringValue = zones.isEmpty ? "Раскладка не помещается на этом экране" : "\(name) · Зона \(picker.selected + 1)"
+        let name = library.layouts.first { $0.id == pickerLayoutID }?.displayName ?? L("Раскладка")
+        pickerHint?.stringValue = zones.isEmpty ? L("Раскладка не помещается на этом экране") : LF("%@ · Zone %d", name, picker.selected + 1)
         if let libraryWarning { pickerHint?.stringValue += " · \(libraryWarning)" }
         let available = Set(library.layouts.filter { !resolvedZones($0, on: display).isEmpty }.map(\.id))
         pickerContent?.updateDisplay(area: display.visible, scale: display.scale)
@@ -517,7 +535,7 @@ import LayoutStorage
         let displayKey = display.uniqueStorageKey(in: pickerDisplays)
         guard zones.indices.contains(index), Display.compatible(pickerDisplays, Display.connected()) else {
             cancelPicker()
-            record("Конфигурация экранов изменилась или зона недоступна")
+            record(L("Конфигурация экранов изменилась или зона недоступна"))
             return
         }
         cancelPicker()
@@ -542,7 +560,7 @@ import LayoutStorage
             let result = await access.place(snapshot, at: target, visibleArea: isUndo ? nil : display.axVisible, cancellation: token)
             guard !token.cancelled, operation === token,
                   let targetApp = NSRunningApplication(processIdentifier: snapshot.pid), !targetApp.isTerminated else {
-                report(result, context: "Поздний результат завершённой сессии, undo не обновлён")
+                report(result, context: L("Поздний результат завершённой сессии, undo не обновлён"))
                 return
             }
             if result.succeeded, let actual = result.actual {
@@ -592,7 +610,7 @@ import LayoutStorage
     }
 
     private func beginFillAssistant(layout: Layout, display: Display, target: CGRect, placed: WindowSnapshot) {
-        guard UserDefaults.standard.object(forKey: "fillAssistantEnabled") == nil || UserDefaults.standard.bool(forKey: "fillAssistantEnabled") else { return }
+        guard preferences.fillEnabled else { return }
         closeFillAssistant()
         let zones = resolvedZones(layout, on: display)
         guard let index = zones.firstIndex(where: { GeometryEngine.close(display.ax($0), target) }), zones.count > 1 else { return }
@@ -619,6 +637,7 @@ import LayoutStorage
         fillLoadingID = request
         let apps = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
+                && !preferences.excludes($0.bundleIdentifier)
         }
         // Scan apps with visible windows first so background apps cannot exhaust the AX budget.
         let metadata = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
@@ -667,7 +686,7 @@ import LayoutStorage
                 }
                 let panel = FillAssistant(zones: zones, area: display.visible, occupied: occupied)
                 guard !panel.isComplete else {
-                    fillScanSummary = "Заполнение: экран \(display.id), все \(zones.count) зоны заняты или перекрыты"
+                    fillScanSummary = LF("Fill: display %d, all %d zones occupied or overlapping", display.id, zones.count)
                     refreshReport()
                     closeFillAssistant()
                     return
@@ -714,7 +733,7 @@ import LayoutStorage
             let occupiedWindows = available.filter { candidate in
                 unusedIDs.contains(candidate.id) && (candidate.minimized || !zones.contains { FillSession.accepts(actual: candidate.snapshot.frame, target: display.ax($0)) })
             }
-            fillScanSummary = "Заполнение: экран \(display.id), apps=\(pids.count), AX=\(candidates.count), visible=\(available.count), used=\(placedFrames.count), occupied=\(occupied.count)/\(zones.count), cards=\(occupiedWindows.count)"
+            fillScanSummary = "Fill: display \(display.id), apps=\(pids.count), AX=\(candidates.count), visible=\(available.count), used=\(placedFrames.count), occupied=\(occupied.count)/\(zones.count), cards=\(occupiedWindows.count)"
             refreshReport()
             fillAssistant?.reconcile(occupied: occupied)
             fillAssistant?.update(occupiedWindows)
@@ -724,7 +743,7 @@ import LayoutStorage
 
     @objc private func undoPlacement() {
         closeFillAssistant()
-        guard !busy, let undo else { record("Нет доступной операции undo"); return }
+        guard !busy, let undo else { record(L("Нет доступной операции undo")); return }
         cancelPicker()
         cancelDrag()
         let displays = Display.connected()
@@ -735,7 +754,7 @@ import LayoutStorage
             sourceScreen: undo.display.ax(undo.display.frame),
             currentScreen: originalDisplay.map { $0.ax($0.frame) }, available: display.axVisible)
         if target != undo.snapshot.frame {
-            record("Undo: геометрия исходного экрана изменилась, frame скорректирован")
+            record(L("Undo: геометрия исходного экрана изменилась, frame скорректирован"))
         }
         perform(undo.snapshot, target: target, display: display, isUndo: true)
     }
@@ -745,7 +764,7 @@ import LayoutStorage
         sessionLayouts = sessionLayouts.filter { id, _ in current.contains { $0.id == id } }
         var baselines: [[Display]] = []
         if fillToken != nil, !fillDisplayIsCurrent() {
-            cancelForContextChange("Целевой экран заполнения изменился")
+            cancelForContextChange(L("Целевой экран заполнения изменился"))
             return
         }
         if picker != nil { baselines.append(pickerDisplays) }
@@ -755,11 +774,11 @@ import LayoutStorage
             refreshReport()
             return
         }
-        cancelForContextChange("Конфигурация экранов изменилась")
+        cancelForContextChange(L("Конфигурация экранов изменилась"))
     }
 
     @objc private func contextChanged(_ notification: Notification) {
-        let reason = notification.name == NSWorkspace.willSleepNotification ? "Переход в сон" : "Смена Space"
+        let reason = notification.name == NSWorkspace.willSleepNotification ? L("Переход в сон") : L("Смена Space")
         cancelForContextChange(reason)
     }
 
@@ -768,7 +787,7 @@ import LayoutStorage
         let pid = app.processIdentifier
         if undo?.snapshot.pid == pid { undo = nil }
         guard pickerSnapshot?.pid == pid || dragSnapshot?.pid == pid || (busy && operationPID == pid) else { return }
-        cancelForContextChange("Целевое приложение завершено")
+        cancelForContextChange(L("Целевое приложение завершено"))
     }
 
     private func cancelForContextChange(_ reason: String) {
@@ -776,15 +795,25 @@ import LayoutStorage
         closeFillAssistant()
         dismissPicker(restoreFocus: false)
         cancelDrag()
-        if hadInteraction { record("\(reason): взаимодействие отменено без возврата фокуса") }
+        if hadInteraction { record(LF("%@: interaction cancelled without restoring focus", reason)) }
         else { refreshReport() }
     }
 
+    private func preferencesChanged() {
+        operation?.cancel()
+        closeFillAssistant()
+        cancelPicker()
+        cancelDrag()
+        installHotkey(option: preferences.shortcut == .controlOptionSpace)
+        dragMenuItem.state = dragEnabled ? .on : .off
+        refreshReport()
+    }
+
     @objc private func toggleDrag() {
-        dragEnabled.toggle()
+        preferences.dragEnabled = !preferences.dragEnabled
         dragMenuItem.state = dragEnabled ? .on : .off
         cancelDrag()
-        record("Перетаскивание \(dragEnabled ? "включено" : "выключено"). Верхняя полоска и Shift, обычный заголовок окна.")
+        record("Dragging: \(dragEnabled), modifier: \(preferences.dragModifier.rawValue)")
     }
 
     private func installMonitors() {
@@ -840,12 +869,13 @@ import LayoutStorage
             dragToken = token
             dragStart = point
             dragDisplays = Display.connected()
-            dragHadShift = event.modifierFlags.contains(.shift)
+            dragHadModifier = event.modifierFlags.contains(dragModifier)
             Task { [self] in
                 do {
                     let snapshot = try await access.captureDragCandidate(at: point, cancellation: token)
                     guard !token.cancelled, dragToken === token, let now = axPointer(),
                           let targetApp = NSRunningApplication(processIdentifier: snapshot.pid), !targetApp.isTerminated,
+                          !preferences.excludes(targetApp.bundleIdentifier),
                           hypot(now.x - point.x, now.y - point.y) <= 3 else {
                         if dragToken === token {
                             dragCaptureSummary = "Drag: baseline moved before capture"
@@ -877,13 +907,13 @@ import LayoutStorage
                 }
             }
         } else if event.type == .flagsChanged {
-            if event.modifierFlags.contains(.shift) { dragHadShift = true }
-            else if dragHadShift { cancelDrag() }
+            if event.modifierFlags.contains(dragModifier) { dragHadModifier = true }
+            else if dragHadModifier { cancelDrag() }
         } else if event.type == .leftMouseDragged {
-            if event.modifierFlags.contains(.shift) { dragHadShift = true }
+            if event.modifierFlags.contains(dragModifier) { dragHadModifier = true }
             checkDrag()
         } else if event.type == .leftMouseUp {
-            finishDrag(shift: event.modifierFlags.contains(.shift))
+            finishDrag(shift: event.modifierFlags.contains(dragModifier))
         }
     }
 
@@ -891,7 +921,7 @@ import LayoutStorage
         guard let snapshot = dragSnapshot, let token = dragToken, !dragChecking else { return }
         guard AXIsProcessTrusted(), Display.compatible(dragDisplays, Display.connected()),
               NSEvent.pressedMouseButtons & 1 != 0 else { cancelDrag(); return }
-        if dragHadShift && !NSEvent.modifierFlags.contains(.shift) { cancelDrag(); return }
+        if dragHadModifier && !NSEvent.modifierFlags.contains(dragModifier) { cancelDrag(); return }
         guard let pointer = axPointer() else { cancelDrag(); return }
         dragChecking = true
         Task {
@@ -907,13 +937,13 @@ import LayoutStorage
                 guard dragRecognition.observe(initial: snapshot.frame, current: current, pointerDelta: delta) else { return }
                 let location = NSEvent.mouseLocation
                 if let display = dragDisplays.first(where: { $0.frame.contains(location) }) {
-                    if NSEvent.modifierFlags.contains(.shift) {
+                    if NSEvent.modifierFlags.contains(dragModifier) {
                         dragBar.hide()
                         dragBarInteraction = DragBarInteraction()
                         let zones = activeZones(on: display)
                         overlay.show(display: display, selected: zones.firstIndex(where: { $0.contains(location) }), zones: zones)
                     } else {
-                        let geometry = DragBarGeometry(layouts: library.layouts, area: display.visible, scale: display.scale)
+                        let geometry = DragBarGeometry(layouts: library.suggestedLayouts(in: display.visible), area: display.visible, scale: display.scale, top: display.menuBarBottom)
                         dragBarInteraction.update(pointer: location, screen: display.id, geometry: geometry)
                         dragBar.show(geometry: geometry, interaction: dragBarInteraction)
                         if let choice = dragBarInteraction.selected {
@@ -941,7 +971,7 @@ import LayoutStorage
             zone = target
             layoutID = nil
         } else {
-            let geometry = DragBarGeometry(layouts: library.layouts, area: display.visible, scale: display.scale)
+            let geometry = DragBarGeometry(layouts: library.suggestedLayouts(in: display.visible), area: display.visible, scale: display.scale, top: display.menuBarBottom)
             guard let choice = dragBarInteraction.drop(at: location, screen: display.id, geometry: geometry) else { cancelDrag(); return }
             zone = choice.target
             layoutID = choice.layoutID
@@ -980,7 +1010,7 @@ import LayoutStorage
         dragSnapshot = nil
         dragRecognition.cancel()
         dragRecognition = DragRecognition()
-        dragHadShift = false
+        dragHadModifier = false
         dragChecking = false
         dragTimer?.invalidate()
         dragTimer = nil

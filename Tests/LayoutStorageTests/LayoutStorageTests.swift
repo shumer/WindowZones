@@ -9,12 +9,36 @@ struct LayoutStorageTests {
             activeByDisplay: ["a": BuiltInLayouts.thirds.id, "b": BuiltInLayouts.focused.id])
         let updated = old.upgradingStandardPresets()
         #expect(updated.layouts == BuiltInLayouts.all)
-        #expect(updated.activeByDisplay == ["a": BuiltInLayouts.thirds.id, "b": BuiltInLayouts.halves.id])
+        #expect(updated.activeByDisplay == ["a": BuiltInLayouts.thirds.id, "b": BuiltInLayouts.focused.id])
         #expect(updated.upgradingStandardPresets() == updated)
         let custom = collection("Custom")
         #expect(custom.upgradingStandardPresets() == custom)
         let decoded = try LayoutArchive.decode(LayoutArchive.encode(updated))
         #expect(decoded == updated)
+    }
+
+    @Test func previousFivePresetsUpgradeButEditedLibraryDoesNot() throws {
+        let old = LayoutCollection(layouts: BuiltInLayouts.previousStandard,
+            activeByDisplay: ["a": BuiltInLayouts.wideLeft.id, "b": BuiltInLayouts.quarters.id])
+        let updated = old.upgradingStandardPresets()
+        #expect(updated.layouts == BuiltInLayouts.all)
+        #expect(updated.activeByDisplay == ["a": BuiltInLayouts.halves.id, "b": BuiltInLayouts.quarters.id])
+        try updated.validate()
+        var edited = BuiltInLayouts.previousStandard
+        edited[0] = Layout(id: edited[0].id, name: "Personal", root: edited[0].root)
+        let custom = LayoutCollection(layouts: edited)
+        #expect(custom.upgradingStandardPresets() == custom)
+    }
+
+    @Test func adaptiveCatalogueUpgradeRetainsSelectionAndCustomContent() {
+        let old = LayoutCollection(layouts: BuiltInLayouts.landscape, activeByDisplay: ["a": BuiltInLayouts.focused.id])
+        let updated = old.upgradingStandardPresets()
+        #expect(updated.layouts == BuiltInLayouts.all)
+        #expect(updated.activeByDisplay == old.activeByDisplay)
+        let portrait = CGRect(x: 0, y: 0, width: 900, height: 1440)
+        #expect(updated.suggestedLayouts(in: portrait).first == BuiltInLayouts.rows)
+        let custom = collection("Custom")
+        #expect(custom.suggestedLayouts(in: portrait) == custom.layouts)
     }
 
     private func collection(_ name: String) -> LayoutCollection {

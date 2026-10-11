@@ -13,38 +13,38 @@ another built-in layout without sizing each window by hand.
 
 [![Checks](https://github.com/shumer/WindowZones/actions/workflows/checks.yml/badge.svg)](https://github.com/shumer/WindowZones/actions/workflows/checks.yml)
 
-**macOS 15+ · Apple Silicon · Early release · App interface currently in Russian**
+**macOS 15+ · Apple Silicon · Early release · English and Russian**
 
 <img src="Resources/AppIcon.iconset/icon_128x128@2x.png" alt="WindowZones app icon showing three window zones" width="128">
 
-## New in 0.2.1
+## New in 0.3.0
 
-Dragging Firefox and Vivaldi by empty space beside their tabs now opens the layout
-bar. Actual tabs, buttons and input fields remain excluded.
+The layout bar now uses a smoky surface below the menu bar, a compact hint and smooth
+transitions. Hover over a zone to preview where the window will go.
 
-## Introduced in 0.2.0
+Layouts adapt to the display: four choices on regular landscape screens, six on
+wide screens, and top/bottom halves, three rows or quarters on portrait screens.
+Existing custom layouts are preserved.
 
-Version 0.2.0 adds five layouts: equal columns, 75/25, thirds, top/bottom halves,
-and four quarters. After placing one window, choose another window from cards in
-the next free zone. Skip a zone or press Escape to stop. Minimized windows can be
-restored by choosing their card. Screen Recording permission enables thumbnails;
-without it, cards use app icons. Previews stay in memory.
+Settings now include General, Controls, Exclusions and Permissions. Choose your
+shortcut and drag modifier, toggle window suggestions, or exclude specific apps.
+Preferences persist between launches. The interface follows macOS in English or Russian.
 
-[Download 0.2.1](https://github.com/shumer/WindowZones/releases/tag/v0.2.1) or use
-Check for Updates in the app. This is an early release with known limitations. The custom menu bar icon shows a window and one filled zone.
+[Download 0.3.0](https://github.com/shumer/WindowZones/releases/tag/v0.3.0) or use
+Check for Updates in the app.
 
 ## What can I do with it?
 
 | When you want to... | Use |
 | --- | --- |
 | Place a window without opening a separate picker | Drag its title bar toward the top of the screen, then drop onto a zone in the layout bar |
-| Choose a built-in layout (five in 0.2.0) | Open the picker with **Control+Option+Space** or the menu bar icon |
+| Choose a layout for your display | Open the picker with **Control+Option+Space** or the menu bar icon |
 | See the current layout across your screen | Hold **Shift** while dragging a window, then release the mouse inside a zone |
 | Reverse the last placement | Choose Undo in the WindowZones menu |
 | Keep the app available after signing in | Enable launch at login in Settings |
 | Get newer versions | Use Check for Updates, or enable automatic update checks |
 
-Each placement affects the window you selected. In 0.2.0, the fill assistant offers
+Each placement affects the window you selected. The fill assistant offers
 other windows for the remaining zones; it moves them only after you choose a card. WindowZones remembers the selected layout for each display. It does not
 restore a workspace of apps or documents when you sign in.
 
@@ -71,7 +71,7 @@ Release downloads are Developer ID signed and notarized by Apple.
 1. Open a regular Finder window.
 2. Grab a free area of its title bar and drag it toward the top of the screen.
 3. When the layout bar appears, move over a zone and release the mouse.
-4. In 0.2.0, select a window card to fill the remaining zone. In 0.1.0, repeat the drag with a second window.
+4. Select a window card to fill the remaining zone, or press Escape to finish.
 5. To reverse the last placement, open the WindowZones menu and choose its Undo command.
 
 Prefer a picker? Activate the window you want to move, press **Control+Option+Space**,
@@ -84,7 +84,8 @@ to cancel snapping and keep your ordinary drag.
 
 ## Make it yours
 
-Open **Настройки…** (Settings) from the WindowZones menu:
+Open **Settings** from the WindowZones menu. Controls lets you choose the shortcut
+and drag modifier; Exclusions lists apps WindowZones should ignore. General includes:
 
 - **Запускать при входе в систему** enables launch at login.
 - **Проверять обновления автоматически** enables automatic update checks.
@@ -113,8 +114,8 @@ that window placement works, then try the alternate shortcut in that menu.
 the current session. Use its own Undo command, not another app's Command-Z. Restarting
 WindowZones clears that history. A closed window cannot be restored.
 
-**Can I create my own layouts?** Not yet. Version 0.1 includes four built-in layouts.
-Version 0.2.0 includes five. A custom layout editor is planned.
+**Can I create my own layouts?** A custom layout editor is planned. The current
+version provides layouts selected for your display size and orientation.
 
 **How do I uninstall?** Turn off launch at login if you enabled it, quit WindowZones
 from its menu, then move the app from Applications to Trash. Layout data remains in
@@ -122,10 +123,9 @@ from its menu, then move the app from Applications to Trash. Layout data remains
 
 ## Compatibility and project status
 
-WindowZones 0.1 is an early release for Apple Silicon running macOS 15 or later.
+WindowZones is an early release for Apple Silicon running macOS 15 or later.
 Real window-placement checks have covered macOS 26.6.2 and 27.0. Other versions,
-more apps and multi-monitor combinations still need broader testing. Intel builds
-and full English localization are not included yet.
+more apps and multi-monitor combinations still need broader testing. Intel builds are not included yet. Full VoiceOver acceptance is still pending.
 
 The published app's signature and notarization were verified. A test copy marked as
 an older version successfully downloaded, installed and relaunched into 0.1.0 through

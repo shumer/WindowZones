@@ -44,6 +44,26 @@ struct DragStartSurfaceTests {
         #expect(!DragStartSurface.contains(CGPoint(x: 600, y: 180), window: window, role: "AXTabGroup", toolbar: toolbar, emptyTabStrip: true))
     }
 
+    @Test func tallerWebTitleRequiresOptInAndStillRejectsControlsAndContent() {
+        for role in ["AXGroup", "AXWebArea"] {
+            for y in [135.0, 145.0, 163.0] {
+                let point = CGPoint(x: 600, y: y)
+                #expect(!DragStartSurface.contains(point, window: window, role: role, toolbar: nil))
+                #expect(DragStartSurface.contains(point, window: window, role: role, toolbar: nil, extendedWebTitle: true))
+            }
+            for point in [CGPoint(x: 600, y: 165), CGPoint(x: 600, y: 300),
+                          CGPoint(x: 101, y: 145), CGPoint(x: 1299, y: 145), CGPoint(x: 600, y: 101)] {
+                #expect(!DragStartSurface.contains(point, window: window, role: role, toolbar: nil, extendedWebTitle: true))
+            }
+        }
+        for role in ["AXButton", "AXTextField", "AXTab", "AXRadioButton", "AXScrollArea", "AXStaticText"] {
+            #expect(!DragStartSurface.contains(CGPoint(x: 600, y: 145), window: window,
+                                               role: role, toolbar: nil, extendedWebTitle: true))
+        }
+        #expect(!DragStartSurface.contains(CGPoint(x: 600, y: 145), window: window,
+                                           role: "AXTabGroup", toolbar: nil, extendedWebTitle: true))
+    }
+
     @Test func rejectsControlsContentTabsAndResizeEdges() {
         for role in ["AXButton", "AXTextField", "AXSearchField", "AXTab", "AXRadioButton", "AXImage", "AXRow"] {
             #expect(!DragStartSurface.allowsTraversal(role))

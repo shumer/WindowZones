@@ -7,13 +7,15 @@ struct Display: Sendable, Equatable {
     let visible: CGRect
     let scale: CGFloat
     let primaryTop: CGFloat
+    let menuBarBottom: CGFloat
 
     @MainActor static func connected() -> [Display] {
         guard let first = NSScreen.screens.first else { return [] }
         return NSScreen.screens.compactMap { screen in
             guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
             return Display(id: id.uint32Value, frame: screen.frame, visible: screen.visibleFrame,
-                           scale: screen.backingScaleFactor, primaryTop: first.frame.maxY)
+                           scale: screen.backingScaleFactor, primaryTop: first.frame.maxY,
+                           menuBarBottom: screen.frame.maxY - max(screen.safeAreaInsets.top, NSStatusBar.system.thickness))
         }
     }
     var zones: [CGRect] { (try? GeometryEngine.zones(in: visible, scale: scale)) ?? [] }
@@ -71,6 +73,8 @@ struct Display: Sendable, Equatable {
 
 @MainActor final class Overlay {
     private var panel: OverlayPanel?
+    private let previewMaterial = NSVisualEffectView()
+    private let drawing = ZoneDrawing()
     private var lastDisplay: Display?
     private var lastSelected: Int?
     private var lastZones: [CGRect] = []
@@ -91,11 +95,27 @@ struct Display: Sendable, Equatable {
             current.hasShadow = false
             current.level = .floating
             current.collectionBehavior = [.canJoinAllSpaces, .stationary]
-            current.contentView = ZoneDrawing(frame: CGRect(origin: .zero, size: display.frame.size))
+            let root = NSView(frame: CGRect(origin: .zero, size: display.frame.size))
+            previewMaterial.material = .hudWindow
+            previewMaterial.blendingMode = .behindWindow
+            previewMaterial.state = .active
+            previewMaterial.wantsLayer = true
+            previewMaterial.layer?.cornerRadius = 12
+            previewMaterial.layer?.masksToBounds = true
+            root.addSubview(previewMaterial)
+            drawing.frame = root.bounds
+            drawing.autoresizingMask = [.width, .height]
+            root.addSubview(drawing)
+            current.contentView = root
             panel = current
         }
         if current.frame != display.frame { current.setFrame(display.frame, display: false) }
-        if let drawing = current.contentView as? ZoneDrawing {
+        previewMaterial.isHidden = showsLabels || selected == nil || resolved.count != 1
+            || NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        if !previewMaterial.isHidden, let zone = resolved.first {
+            previewMaterial.frame = zone.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY).insetBy(dx: 2, dy: 2)
+        }
+        do {
             drawing.zones = resolved.map { $0.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY) }
             drawing.selected = selected
             drawing.showsLabels = showsLabels
@@ -216,7 +236,7 @@ struct Display: Sendable, Equatable {
 
     init(layout: Layout, owner: ZonePickerContent) {
         layoutID = layout.id
-        label = NSTextField(labelWithString: layout.name)
+        label = NSTextField(labelWithString: layout.displayName)
         definition = layout
         func names(_ node: LayoutNode) -> [String] {
             switch node {
@@ -237,8 +257,8 @@ struct Display: Sendable, Equatable {
             button.bezelStyle = .regularSquare
             button.setButtonType(.toggle)
             button.font = .systemFont(ofSize: 13, weight: .medium)
-            button.setAccessibilityLabel("\(layout.name), зона \(index + 1), \(zoneName)")
-            button.toolTip = "\(layout.name): \(zoneName)"
+            button.setAccessibilityLabel(LF("%@, zone %d, %@", layout.displayName, index + 1, layout.localizedZoneName(zoneName)))
+            button.toolTip = "\(layout.displayName): \(layout.localizedZoneName(zoneName))"
             button.preview = { [weak owner] in owner?.preview?(layout.id, index) }
             buttons.append(button)
             addSubview(button)
@@ -306,6 +326,8 @@ struct Display: Sendable, Equatable {
     private let cancelButton = PickerCancelButton()
     let hint = NSTextField(labelWithString: "")
     private var cards: [LayoutCard] = []
+    private let grid = NSStackView()
+    private var shownLayouts: [Layout] = []
     var choose: ((UUID, Int) -> Void)?
     var preview: ((UUID, Int) -> Void)?
     var cancel: (() -> Void)?
@@ -322,19 +344,51 @@ struct Display: Sendable, Equatable {
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
-        let title = NSTextField(labelWithString: "Разместить окно")
+        let title = NSTextField(labelWithString: L("Разместить окно"))
         title.font = .systemFont(ofSize: 17, weight: .semibold)
         stack.addArrangedSubview(title)
         let app = NSTextField(labelWithString: applicationName)
         app.textColor = .secondaryLabelColor
         app.lineBreakMode = .byTruncatingTail
         stack.addArrangedSubview(app)
-        displayPopup.setAccessibilityLabel("Целевой монитор")
+        displayPopup.setAccessibilityLabel(L("Целевой монитор"))
         stack.addArrangedSubview(displayPopup)
-        let grid = NSStackView()
         grid.orientation = .vertical
         grid.spacing = 12
         grid.distribution = .fillEqually
+        setLayouts(layouts)
+        stack.addArrangedSubview(grid)
+        NSLayoutConstraint.activate([
+            grid.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40),
+            grid.heightAnchor.constraint(greaterThanOrEqualToConstant: 210)
+        ])
+        hint.font = .systemFont(ofSize: 12)
+        hint.textColor = .secondaryLabelColor
+        hint.lineBreakMode = .byTruncatingTail
+        stack.addArrangedSubview(hint)
+        hint.widthAnchor.constraint(equalTo: grid.widthAnchor).isActive = true
+        let footer = NSStackView()
+        let help = NSTextField(labelWithString: L("Tab · 1-9 · Стрелки и Enter"))
+        help.font = .systemFont(ofSize: 11)
+        help.textColor = .secondaryLabelColor
+        footer.addArrangedSubview(help)
+        footer.addArrangedSubview(NSView())
+        cancelButton.title = L("Отмена")
+        cancelButton.target = self
+        cancelButton.action = #selector(cancelled)
+        cancelButton.keyEquivalent = "\u{1b}"
+        footer.addArrangedSubview(cancelButton)
+        stack.addArrangedSubview(footer)
+        footer.widthAnchor.constraint(equalTo: grid.widthAnchor).isActive = true
+        let controls: [NSView] = [displayPopup] + cards.flatMap(\.buttons) + [cancelButton]
+        for index in controls.indices { controls[index].nextKeyView = controls[(index + 1) % controls.count] }
+    }
+    required init?(coder: NSCoder) { nil }
+    func setLayouts(_ layouts: [Layout]) {
+        guard layouts != shownLayouts else { return }
+        shownLayouts = layouts
+        for view in grid.arrangedSubviews { grid.removeArrangedSubview(view); view.removeFromSuperview() }
+        cards.removeAll()
         for rowStart in stride(from: 0, to: layouts.count, by: 2) {
             let row = NSStackView()
             row.spacing = 16
@@ -348,33 +402,9 @@ struct Display: Sendable, Equatable {
             grid.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: grid.widthAnchor).isActive = true
         }
-        stack.addArrangedSubview(grid)
-        NSLayoutConstraint.activate([
-            grid.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40),
-            grid.heightAnchor.constraint(greaterThanOrEqualToConstant: 210)
-        ])
-        hint.font = .systemFont(ofSize: 12)
-        hint.textColor = .secondaryLabelColor
-        hint.lineBreakMode = .byTruncatingTail
-        stack.addArrangedSubview(hint)
-        hint.widthAnchor.constraint(equalTo: grid.widthAnchor).isActive = true
-        let footer = NSStackView()
-        let help = NSTextField(labelWithString: "Tab · 1-9 · Стрелки и Enter")
-        help.font = .systemFont(ofSize: 11)
-        help.textColor = .secondaryLabelColor
-        footer.addArrangedSubview(help)
-        footer.addArrangedSubview(NSView())
-        cancelButton.title = "Отмена"
-        cancelButton.target = self
-        cancelButton.action = #selector(cancelled)
-        cancelButton.keyEquivalent = "\u{1b}"
-        footer.addArrangedSubview(cancelButton)
-        stack.addArrangedSubview(footer)
-        footer.widthAnchor.constraint(equalTo: grid.widthAnchor).isActive = true
         let controls: [NSView] = [displayPopup] + cards.flatMap(\.buttons) + [cancelButton]
         for index in controls.indices { controls[index].nextKeyView = controls[(index + 1) % controls.count] }
     }
-    required init?(coder: NSCoder) { nil }
     func updateDisplay(area: CGRect, scale: CGFloat) {
         for card in cards { card.updateDisplay(area: area, scale: scale) }
     }
@@ -397,7 +427,7 @@ struct Display: Sendable, Equatable {
         for card in cards {
             let available = availableLayoutIDs.contains(card.layoutID) && card.geometryAvailable
             card.label.textColor = available ? .labelColor : .disabledControlTextColor
-            card.toolTip = available ? nil : "Эта раскладка не помещается на выбранном мониторе"
+            card.toolTip = available ? nil : L("Эта раскладка не помещается на выбранном мониторе")
             for button in card.buttons {
                 let selected = card.layoutID == layoutID && button.tag == index
                 button.state = selected ? .on : .off

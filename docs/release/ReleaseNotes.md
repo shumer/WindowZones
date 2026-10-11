@@ -1,15 +1,20 @@
-# WindowZones 0.2.1
+# WindowZones 0.3.0
 
-Fixes the missing layout bar when dragging Firefox or Vivaldi by empty space beside their tabs.
+A calmer layout bar, display-aware layouts, and more control over how WindowZones works.
 
-- Firefox: recognize empty gaps in the tab strip while excluding the tabs and buttons themselves.
-- Vivaldi: recognize title areas nested inside a scrolling container.
-- Window movement must still be confirmed before the layout bar appears.
+- A wider smoky layout bar below the macOS menu bar, with smooth appearance, expansion and dismissal.
+- A compact drag hint and a translucent preview of the destination zone.
+- Adaptive presets: four on regular landscape displays, six on wide displays, and top/bottom halves, three rows or quarters on portrait displays.
+- General, Controls, Exclusions and Permissions settings. Shortcut, drag modifier, drag and fill-assistant preferences persist between launches.
+- Exclude apps from placement and fill suggestions while retaining Undo.
+- English and Russian interface, following the macOS language setting.
+- Improved keyboard navigation in settings and window suggestions.
+- Expanded recognition of the Claude desktop title area. This specific compatibility fix still needs a confirmed physical drag after the change.
 
-Both browser fixes were confirmed by physical window dragging on the test Mac. 62 automated tests passed locally. This remains an early release for Apple silicon, macOS 15 or later; the primary test system is macOS 27.0.1.
+Existing untouched standard layout libraries migrate automatically. Custom libraries remain unchanged. Display-specific choices are retained where available.
 
-Use Check for Updates in WindowZones, or download WindowZones-0.2.1-arm64.zip and replace the app in Applications. Release archives are Developer ID signed and notarized by Apple.
+68 automated tests passed locally. The updated drag animation and panel design were accepted by the user on the test Mac. This is an early release for Apple silicon and macOS 15 or later, primarily tested on macOS 27.0.1. Full VoiceOver acceptance, portrait and mixed-display physical drag checks, clean-profile setup, real login and the complete Spaces/sleep/disconnect matrix remain incomplete. Very fast drags and app minimum window sizes can affect placement. No custom layout editor or Intel build yet.
 
-Known limitations remain: very fast drags may be missed, some apps enforce minimum window sizes, Chrome Accessibility availability varies, and minimized Telegram windows are not separately verified. The full Spaces, sleep, monitor-disconnect and clean-profile matrix is incomplete. Physical negative tests for dragging tabs and resizing were not repeated for this patch. No custom layout editor or Intel build yet.
+Use Check for Updates in WindowZones, or download WindowZones-0.3.0-arm64.zip. Release archives are Developer ID signed and notarized by Apple.
 
 Report issues at https://github.com/shumer/WindowZones/issues with the app, macOS version, display setup and reproduction steps. Remove private content from screenshots.

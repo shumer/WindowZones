@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import Foundation
 import Geometry
@@ -64,13 +65,13 @@ actor WindowAccess {
     private func prepare(_ element: AXUIElement, until deadline: TimeInterval,
                          cancellation: Cancellation? = nil) throws {
         guard cancellation?.cancelled != true else {
-            throw AccessFailure(status: "failed", message: "Операция отменена")
+            throw AccessFailure(status: "failed", message: L("Операция отменена"))
         }
         guard AXIsProcessTrusted() else {
-            throw AccessFailure(status: "denied", message: "Нет разрешения Accessibility")
+            throw AccessFailure(status: "denied", message: L("Нет разрешения Accessibility"))
         }
         let remaining = deadline - ProcessInfo.processInfo.systemUptime
-        guard remaining > 0 else { throw AccessFailure(status: "failed", message: "Истёк бюджет AX") }
+        guard remaining > 0 else { throw AccessFailure(status: "failed", message: L("Истёк бюджет AX")) }
         let error = AXUIElementSetMessagingTimeout(element, Float(min(0.25, remaining)))
         guard error == .success else { throw failure(error, operation: "set messaging timeout") }
     }
@@ -82,14 +83,14 @@ actor WindowAccess {
         let error = AXUIElementCopyAttributeValue(element, name as CFString, &value)
         guard error == .success else { throw failure(error, operation: "read \(name)") }
         guard let value else {
-            throw AccessFailure(status: "failed", message: "read \(name): пустой результат AX")
+            throw AccessFailure(status: "failed", message: LF("read %@: empty AX result", name))
         }
         return value
     }
 
     private func element(_ value: CFTypeRef) throws -> AXUIElement {
         guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
-            throw AccessFailure(status: "unsupported", message: "Неверный тип AX element")
+            throw AccessFailure(status: "unsupported", message: L("Неверный тип AX element"))
         }
         return unsafeDowncast(value, to: AXUIElement.self)
     }
@@ -99,7 +100,7 @@ actor WindowAccess {
         let position = try read(element, kAXPositionAttribute, until: deadline, cancellation: cancellation)
         let size = try read(element, kAXSizeAttribute, until: deadline, cancellation: cancellation)
         guard CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else {
-            throw AccessFailure(status: "unsupported", message: "Нет геометрии AX")
+            throw AccessFailure(status: "unsupported", message: L("Нет геометрии AX"))
         }
         var point = CGPoint.zero
         var dimensions = CGSize.zero
@@ -107,7 +108,7 @@ actor WindowAccess {
               AXValueGetValue(unsafeDowncast(size, to: AXValue.self), .cgSize, &dimensions),
               [point.x, point.y, dimensions.width, dimensions.height].allSatisfy(\.isFinite),
               dimensions.width > 0, dimensions.height > 0 else {
-            throw AccessFailure(status: "unsupported", message: "Невалидная геометрия AX")
+            throw AccessFailure(status: "unsupported", message: L("Невалидная геометрия AX"))
         }
         return CGRect(origin: point, size: dimensions)
     }
@@ -117,15 +118,15 @@ actor WindowAccess {
         let role = try read(window, kAXRoleAttribute, until: deadline, cancellation: cancellation) as? String
         let subrole = try read(window, kAXSubroleAttribute, until: deadline, cancellation: cancellation) as? String
         guard role == kAXWindowRole, subrole == kAXStandardWindowSubrole else {
-            throw AccessFailure(status: "unsupported", message: "Поддерживаются только обычные окна")
+            throw AccessFailure(status: "unsupported", message: L("Поддерживаются только обычные окна"))
         }
         let minimized = try read(window, kAXMinimizedAttribute, until: deadline, cancellation: cancellation) as? Bool
-        guard minimized == false || (allowMinimized && minimized == true) else { throw AccessFailure(status: "unsupported", message: "Окно свёрнуто или статус неизвестен") }
+        guard minimized == false || (allowMinimized && minimized == true) else { throw AccessFailure(status: "unsupported", message: L("Окно свёрнуто или статус неизвестен")) }
         // Some apps expose resize and fullscreen capabilities only after restoring from Dock.
         if allowMinimized && minimized == true { return }
         do {
             let fullScreen = try read(window, "AXFullScreen", until: deadline, cancellation: cancellation) as? Bool
-            guard fullScreen == false else { throw AccessFailure(status: "unsupported", message: "Полноэкранное окно или статус неизвестен") }
+            guard fullScreen == false else { throw AccessFailure(status: "unsupported", message: L("Полноэкранное окно или статус неизвестен")) }
         } catch let error as AccessFailure {
             // Missing fullscreen metadata is handled conservatively in the prototype.
             throw error
@@ -135,7 +136,7 @@ actor WindowAccess {
             var settable: DarwinBoolean = false
             let error = AXUIElementIsAttributeSettable(window, attribute as CFString, &settable)
             guard error == .success else { throw failure(error, operation: "check settable \(attribute)") }
-            guard settable.boolValue else { throw AccessFailure(status: "unsupported", message: "Окно не разрешает изменение position/size") }
+            guard settable.boolValue else { throw AccessFailure(status: "unsupported", message: L("Окно не разрешает изменение position/size")) }
         }
     }
 
@@ -152,7 +153,7 @@ actor WindowAccess {
             let windows = try? read(app, kAXWindowsAttribute, until: deadline, cancellation: cancellation)
             let count = (windows as? [AXUIElement]).map { String($0.count) } ?? "unknown"
             let unavailable = issue.axCode == AXError.noValue.rawValue
-            let explanation = unavailable ? "Приложение не предоставило активное окно. Открой обычное окно и повтори. " : ""
+            let explanation = unavailable ? L("Приложение не предоставило активное окно. Открой обычное окно и повтори. ") : ""
             throw AccessFailure(status: unavailable ? "unsupported" : issue.status,
                                 message: "\(explanation)\(issue.message); AXMainWindow: \(main == nil ? "unavailable" : "available"); AXWindows count: \(count)",
                                 axCode: issue.axCode)
@@ -170,11 +171,11 @@ actor WindowAccess {
         var hit: AXUIElement?
         let error = AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit)
         guard error == .success else { throw failure(error, operation: "hit test") }
-        guard let hit else { throw AccessFailure(status: "failed", message: "hit test: пустой результат AX") }
+        guard let hit else { throw AccessFailure(status: "failed", message: L("hit test: пустой результат AX")) }
         let role = try read(hit, kAXRoleAttribute, until: deadline, cancellation: cancellation) as? String
         // Only passive title surfaces may lead to a toolbar candidate, never controls or tabs.
         guard let role, DragStartSurface.allowsTraversal(role) else {
-            throw AccessFailure(status: "unsupported", message: "Начало жеста вне заголовка (\(role ?? "unknown"))")
+            throw AccessFailure(status: "unsupported", message: LF("Drag began outside the title bar (%@)", role ?? "unknown"))
         }
         var toolbar: AXUIElement?
         var tabStrip: AXUIElement?
@@ -185,19 +186,19 @@ actor WindowAccess {
             if ancestorRole == "AXToolbar" { toolbar = ancestor; break }
             if ancestorRole == kAXWindowRole || ancestorRole == "AXTitleBar" { break }
             guard DragStartSurface.allowsAncestorTraversal(ancestorRole) else {
-                throw AccessFailure(status: "unsupported", message: "Интерактивный элемент панели инструментов (\(ancestorRole))")
+                throw AccessFailure(status: "unsupported", message: LF("Interactive toolbar element (%@)", ancestorRole))
             }
             ancestor = try element(read(ancestor, kAXParentAttribute, until: deadline, cancellation: cancellation))
             ancestorRole = try read(ancestor, kAXRoleAttribute, until: deadline, cancellation: cancellation) as? String ?? ""
         }
         guard toolbar != nil || ancestorRole == kAXWindowRole || ancestorRole == "AXTitleBar" else {
-            throw AccessFailure(status: "unsupported", message: "Не удалось подтвердить область заголовка")
+            throw AccessFailure(status: "unsupported", message: L("Не удалось подтвердить область заголовка"))
         }
         let window = role == kAXWindowRole ? hit : try element(read(hit, kAXWindowAttribute, until: deadline, cancellation: cancellation))
         var pid: pid_t = 0
         AXUIElementGetPid(window, &pid)
         guard pid != ProcessInfo.processInfo.processIdentifier else {
-            throw AccessFailure(status: "unsupported", message: "Собственное окно")
+            throw AccessFailure(status: "unsupported", message: L("Собственное окно"))
         }
         let initial = try frame(window, until: deadline, cancellation: cancellation)
         let toolbarFrame = try toolbar.map { try frame($0, until: deadline, cancellation: cancellation) }
@@ -206,16 +207,19 @@ actor WindowAccess {
             // Only gaps between tab children may start a window drag.
             let children = try read(tabStrip, kAXChildrenAttribute, until: deadline, cancellation: cancellation) as? [AXUIElement]
             guard let children, children.count <= 64 else {
-                throw AccessFailure(status: "unsupported", message: "Не удалось проверить свободное место среди вкладок")
+                throw AccessFailure(status: "unsupported", message: L("Не удалось проверить свободное место среди вкладок"))
             }
             let childFrames = try children.map { try frame($0, until: deadline, cancellation: cancellation) }
             emptyTabStrip = DragStartSurface.isEmptyTabStrip(point, strip: try frame(tabStrip, until: deadline, cancellation: cancellation), children: childFrames)
             guard emptyTabStrip else {
-                throw AccessFailure(status: "unsupported", message: "Начало жеста на вкладке или её кнопке")
+                throw AccessFailure(status: "unsupported", message: L("Начало жеста на вкладке или её кнопке"))
             }
         }
-        guard DragStartSurface.contains(point, window: initial, role: role, toolbar: toolbarFrame, emptyTabStrip: emptyTabStrip) else {
-            throw AccessFailure(status: "unsupported", message: "Неоднозначная область переноса (\(role), toolbar=\(toolbar != nil))")
+        // Claude exposes its taller custom title bar as passive web groups.
+        let extendedWebTitle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.anthropic.claudefordesktop"
+        guard DragStartSurface.contains(point, window: initial, role: role, toolbar: toolbarFrame,
+                                        emptyTabStrip: emptyTabStrip, extendedWebTitle: extendedWebTitle) else {
+            throw AccessFailure(status: "unsupported", message: LF("Ambiguous drag area (%@, toolbar=%@)", role, String(toolbar != nil)))
         }
         return WindowSnapshot(reference: WindowReference(window), frame: initial, pid: pid)
     }
@@ -277,7 +281,7 @@ actor WindowAccess {
             }
             try await Task.sleep(for: .milliseconds(50))
         }
-        throw AccessFailure(status: "failed", message: "Окно не восстановилось из Dock")
+        throw AccessFailure(status: "failed", message: L("Окно не восстановилось из Dock"))
     }
 
     func validateTarget(_ snapshot: WindowSnapshot, cancellation: Cancellation) throws {
@@ -313,7 +317,7 @@ actor WindowAccess {
         // Separate AX writes because an in-flight window animation can overwrite the previous frame.
         try prepare(window, until: deadline, cancellation: cancellation)
         guard deadline - ProcessInfo.processInfo.systemUptime > 0.25 else {
-            throw AccessFailure(status: "failed", message: "Нет времени на проверку стабилизации frame")
+            throw AccessFailure(status: "failed", message: L("Нет времени на проверку стабилизации frame"))
         }
         try await Task.sleep(for: .milliseconds(150))
         var stability = FrameStability()
@@ -325,7 +329,7 @@ actor WindowAccess {
             let current = try frame(window, until: deadline, cancellation: cancellation)
             if stability.observe(current, at: ProcessInfo.processInfo.systemUptime) { return current }
         }
-        throw AccessFailure(status: "failed", message: "Frame не стабилизировался в пределах бюджета AX")
+        throw AccessFailure(status: "failed", message: L("Frame не стабилизировался в пределах бюджета AX"))
     }
 
     func place(_ snapshot: WindowSnapshot, at target: CGRect, visibleArea: CGRect?, cancellation: Cancellation) async -> PlacementResult {
@@ -405,21 +409,21 @@ actor WindowAccess {
                     }
                 }
             }
-            guard let actual else { throw AccessFailure(status: "failed", message: "Нет read-back") }
+            guard let actual else { throw AccessFailure(status: "failed", message: L("Нет read-back")) }
             if GeometryEngine.close(actual, target) {
                 status = "exact"
-                message = "Окно размещено, отклонение не больше 2 pt"
+                message = L("Окно размещено, отклонение не больше 2 pt")
             } else if let before, GeometryEngine.close(actual, before), !GeometryEngine.close(before, target) {
                 status = "unsupported"
-                message = "Приложение оставило окно на прежнем месте"
+                message = L("Приложение оставило окно на прежнем месте")
             } else {
                 status = "adjusted"
-                message = "Приложение скорректировало размер или положение"
+                message = L("Приложение скорректировало размер или положение")
             }
         } catch {
             let issue = error as? AccessFailure
             status = issue?.status ?? "failed"
-            message = "\(stage): \(issue?.message ?? "Ошибка AX")"
+            message = "\(stage): \(issue?.message ?? L("Ошибка AX"))"
             // Samples retain earlier measurements, but a failed write may have changed the frame.
             actual = nil
             if wrote, !cancellation.cancelled, let before {
@@ -461,10 +465,10 @@ actor WindowAccess {
                         samples.append(FrameSample(stage: "after rollback final position", frame: recovered))
                     }
                     actual = recovered
-                    message += GeometryEngine.close(actual!, before) ? "; исходный frame восстановлен" : "; восстановление скорректировано приложением"
+                    message += GeometryEngine.close(actual!, before) ? L("; исходный frame восстановлен") : L("; восстановление скорректировано приложением")
                 } catch {
                     let rollbackIssue = error as? AccessFailure
-                    message += "; восстановление не подтверждено (\(stage): \(rollbackIssue?.message ?? "операция прервана"))"
+                    message += LF("; restore unconfirmed (%@: %@)", stage, rollbackIssue?.message ?? L("операция прервана"))
                 }
             }
         }

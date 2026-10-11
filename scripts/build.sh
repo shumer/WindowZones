@@ -14,6 +14,9 @@ mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources" "$app_path/Co
 cp "$bin_path/WindowZones" "$app_path/Contents/MacOS/WindowZones"
 cp Resources/Info.plist "$app_path/Contents/Info.plist"
 cp Resources/AppIcon.icns "$app_path/Contents/Resources/AppIcon.icns"
+for localization in Resources/*.lproj; do
+  ditto "$localization" "$app_path/Contents/Resources/${localization:t}"
+done
 ditto Resources/Licenses "$app_path/Contents/Resources/Licenses"
 framework_path="$PWD/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
 [[ -d "$framework_path" ]] || { print -u2 'Sparkle artifact missing.'; exit 1; }
