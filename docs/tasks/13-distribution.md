@@ -73,3 +73,10 @@ scripts/verify-update.swift проверяет опубликованный ZIP 
 Релиз [v0.3.0](https://github.com/shumer/WindowZones/releases/tag/v0.3.0), build 4, опубликован как latest. Исходный commit: 1b401053e2b0512bc57010b395f76424ab209010. Checks 38122356635 и Signed release candidate 38122359131 завершились успешно. 68 тестов прошли локально и релизный CI завершил тестовый шаг.
 
 Скачанный архив проверен: SHA256, commit/build metadata, Sparkle EdDSA, Developer ID, stapler и Gatekeeper (Notarized Developer ID). Повреждённый, обрезанный архив и посторонний ключ отклонены. Через install.sh --release-app установлена оригинальная нотариализованная сборка в Applications. Запуск, версия 0.3.0 (4), en/ru ресурсы и сохранённое Accessibility подтверждены. Публичный latest appcast возвращает 0.3.0 / 4 и URL этого релиза. Реальное обновление через UI Sparkle с 0.2.1 до 0.3.0 отдельно не выполнено.
+
+
+### Опубликован 0.3.1, 11 октября 2026
+
+[v0.3.1](https://github.com/shumer/WindowZones/releases/tag/v0.3.1), build 5, опубликован как latest по запросу пользователя. Commit 4852aea5f5ee237a15f86e1b68b5e1e2ae6b28bd. Checks 38123198822 и Signed release candidate 38123200658 успешны. 68 локальных тестов прошли.
+
+Проверены SHA256, метаданные, Sparkle EdDSA и отклонение повреждённого/обрезанного пакета, Developer ID, stapler и Gatekeeper. Оригинальная релизная сборка установлена через install.sh --release-app. AX сохранился. После проверки приложение запущено с --settings без --diagnostics, обычные настройки показывают 0.3.1. Публичный appcast возвращает 0.3.1 / 5. Обновление через интерфейс Sparkle отдельно не повторялось. При критическом сбое вернуть latest на 0.3.0 и установить предыдущую версию вручную.
