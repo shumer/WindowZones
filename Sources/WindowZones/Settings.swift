@@ -5,11 +5,13 @@ import Sparkle
 import LayoutStorage
 import UniformTypeIdentifiers
 
-@MainActor final class ApplicationSettings: NSObject {
+@MainActor final class ApplicationSettings: NSObject, NSTabViewDelegate {
     var onChange: (() -> Void)?
     var shortcutStatus: (() -> String)?
     private let preferences = Preferences()
     private var window: NSWindow?
+    private var tabs: NSTabView?
+    private var navigation: NSSegmentedControl?
     private var login = KeyboardButton()
     private var automatic = KeyboardButton()
     private var fill = KeyboardButton()
@@ -57,14 +59,14 @@ import UniformTypeIdentifiers
         let view = NSStackView()
         view.orientation = .vertical
         view.alignment = .leading
-        view.spacing = 16
-        view.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        view.spacing = 14
+        view.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         return view
     }
 
     private func label(_ text: String) -> NSTextField {
         let view = NSTextField(wrappingLabelWithString: L(text))
-        view.widthAnchor.constraint(equalToConstant: 490).isActive = true
+        view.widthAnchor.constraint(equalToConstant: 520).isActive = true
         return view
     }
 
@@ -79,82 +81,161 @@ import UniformTypeIdentifiers
         return view
     }
 
+    private func section(_ title: String, _ views: [NSView]) -> NSBox {
+        let box = NSBox()
+        box.boxType = .custom
+        box.borderType = .lineBorder
+        box.borderColor = .separatorColor
+        box.borderWidth = 0.5
+        box.cornerRadius = 10
+        box.fillColor = .controlBackgroundColor
+        box.contentViewMargins = .zero
+        let content = stack()
+        let heading = NSTextField(labelWithString: L(title))
+        heading.font = .systemFont(ofSize: 13, weight: .semibold)
+        content.addArrangedSubview(heading)
+        views.forEach { content.addArrangedSubview($0) }
+        box.contentView = content
+        box.widthAnchor.constraint(equalToConstant: 552).isActive = true
+        return box
+    }
+
+    private func help(_ text: String) -> NSTextField {
+        let view = label(text)
+        view.font = .systemFont(ofSize: 12)
+        view.textColor = .secondaryLabelColor
+        return view
+    }
+
     private func makeWindow() {
-        let panel = SettingsWindow(contentRect: CGRect(x: 0, y: 0, width: 570, height: 490), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let panel = SettingsWindow(contentRect: CGRect(x: 0, y: 0, width: 624, height: 650), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         panel.title = L("WindowZones Settings")
         panel.isReleasedWhenClosed = false
+        let root = stack()
+        root.spacing = 12
+        let header = NSStackView()
+        header.spacing = 12
+        let icon = NSImageView(image: NSImage(named: NSImage.applicationIconName) ?? NSImage())
+        icon.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        header.addArrangedSubview(icon)
+        let brand = NSStackView()
+        brand.orientation = .vertical
+        brand.alignment = .leading
+        brand.spacing = 2
+        let title = NSTextField(labelWithString: "WindowZones")
+        title.font = .systemFont(ofSize: 19, weight: .semibold)
+        brand.addArrangedSubview(title)
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let subtitle = NSTextField(labelWithString: LF("Version %@", version))
+        subtitle.font = .systemFont(ofSize: 12)
+        subtitle.textColor = .secondaryLabelColor
+        brand.addArrangedSubview(subtitle)
+        header.addArrangedSubview(brand)
+        root.addArrangedSubview(header)
         let tabs = NSTabView()
+        tabs.tabViewType = .noTabsNoBorder
+        tabs.delegate = self
+        self.tabs = tabs
         panel.tabs = tabs
+        let names = ["General", "Controls", "Exclusions", "Permissions"]
+        let navigation = NSSegmentedControl(labels: names.map { L($0) }, trackingMode: .selectOne,
+                                            target: self, action: #selector(selectPage))
+        navigation.segmentStyle = .rounded
+        navigation.setAccessibilityLabel(L("Settings sections"))
+        navigation.selectedSegment = 0
+        self.navigation = navigation
+        root.addArrangedSubview(navigation)
+        navigation.widthAnchor.constraint(equalToConstant: 592).isActive = true
         func add(_ name: String, _ body: NSStackView) {
             let tab = NSTabViewItem(identifier: name)
             tab.label = L(name)
+            body.addArrangedSubview(NSView())
             tab.view = body
             tabs.addTabViewItem(tab)
         }
         let general = stack()
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
-        let title = NSTextField(labelWithString: "WindowZones \(version)")
-        title.font = .systemFont(ofSize: 20, weight: .semibold)
-        general.addArrangedSubview(title)
-        general.addArrangedSubview(label("Keyboard: Tab moves between controls; Control-Tab changes tabs."))
-        general.addArrangedSubview(label("Drag a window upwards to choose a layout. Only the window you choose is moved."))
+        general.addArrangedSubview(help("Drag a window upwards to choose a layout. Only the window you choose is moved."))
         login = KeyboardButton(checkboxWithTitle: L("Launch at login"), target: self, action: #selector(changeLogin))
         automatic = KeyboardButton(checkboxWithTitle: L("Check for updates automatically"), target: self, action: #selector(changeAutomaticUpdates))
         fill = KeyboardButton(checkboxWithTitle: L("Suggest windows for remaining zones"), target: self, action: #selector(changeFill))
-        [login, automatic, fill].forEach { general.addArrangedSubview($0) }
-        general.addArrangedSubview(KeyboardButton(title: L("Check for Updates…"), target: self, action: #selector(checkForUpdates)))
-        message = label("")
-        message.textColor = .secondaryLabelColor
-        general.addArrangedSubview(message)
+        general.addArrangedSubview(section("Everyday use", [login, fill,
+            help("After placing a window, choose another app to fill the remaining space.")]))
+        message = help("")
+        general.addArrangedSubview(section("Updates", [automatic,
+            KeyboardButton(title: L("Check for Updates…"), target: self, action: #selector(checkForUpdates)), message]))
         add("General", general)
 
         let controls = stack()
         drag = KeyboardButton(checkboxWithTitle: L("Enable window dragging"), target: self, action: #selector(changeControls))
-        controls.addArrangedSubview(drag)
-        shortcut.addItems(withTitles: ["Control + Option + Space", "Control + Shift + Space"])
+        controls.addArrangedSubview(section("Window placement", [drag,
+            help("Drag a window towards the menu bar, choose a zone, then release.")]))
+        shortcut.addItems(withTitles: ["⌃ ⌥ Space", "⌃ ⇧ Space"])
         shortcut.target = self
         shortcut.action = #selector(changeControls)
-        controls.addArrangedSubview(row("Open zone picker", control: shortcut))
-        modifier.addItems(withTitles: ["Shift", "Option", "Control"])
+        modifier.addItems(withTitles: ["Shift ⇧", "Option ⌥", "Control ⌃"])
         modifier.target = self
         modifier.action = #selector(changeControls)
-        controls.addArrangedSubview(row("Show zones while dragging", control: modifier))
-        controls.addArrangedSubview(label("The top layout bar works without a modifier. Release the modifier or press Escape to cancel zone snapping."))
-        shortcutMessage = label("")
-        controls.addArrangedSubview(shortcutMessage)
-        controls.addArrangedSubview(label("Undo the last placement from the menu bar. Pausing dragging does not disable the keyboard picker."))
+        shortcutMessage = help("")
+        controls.addArrangedSubview(section("Keyboard", [row("Open zone picker", control: shortcut),
+            row("Show zones while dragging", control: modifier), shortcutMessage,
+            help("The top layout bar works without a modifier. Release the modifier or press Escape to cancel zone snapping.")]))
+        controls.addArrangedSubview(help("Undo the last placement from the menu bar. Pausing dragging does not disable the keyboard picker."))
         add("Controls", controls)
 
         let excluded = stack()
-        excluded.addArrangedSubview(label("Excluded apps are ignored by dragging, the zone picker and window suggestions. Undo remains available."))
+        excluded.addArrangedSubview(help("Excluded apps are ignored by dragging, the zone picker and window suggestions. Undo remains available."))
         exclusions.setAccessibilityLabel(L("Excluded applications"))
         exclusions.target = self
         exclusions.action = #selector(selectExclusion)
-        exclusions.widthAnchor.constraint(equalToConstant: 490).isActive = true
-        excluded.addArrangedSubview(exclusions)
+        exclusions.widthAnchor.constraint(equalToConstant: 520).isActive = true
         let buttons = NSStackView()
         buttons.addArrangedSubview(KeyboardButton(title: L("Add Application…"), target: self, action: #selector(addExclusion)))
         removeExclusion = KeyboardButton(title: L("Remove"), target: self, action: #selector(deleteExclusion))
         buttons.addArrangedSubview(removeExclusion)
-        excluded.addArrangedSubview(buttons)
-        excluded.addArrangedSubview(label("Settings are saved immediately. Adding an exclusion does not move or close any windows."))
+        excluded.addArrangedSubview(section("Excluded applications", [exclusions, buttons,
+            help("Settings are saved immediately. Adding an exclusion does not move or close any windows.")]))
         add("Exclusions", excluded)
 
         let permissions = stack()
-        permissions.addArrangedSubview(label("1. Allow Accessibility so WindowZones can move and resize the window you select. Settings remain available without it."))
         permission = label("")
-        permissions.addArrangedSubview(permission)
-        permissions.addArrangedSubview(KeyboardButton(title: L("Open Accessibility Settings"), target: self, action: #selector(openPermissions)))
-        permissions.addArrangedSubview(label("2. Screen recording is optional. It enables window previews; without it, suggestions use app icons. Previews stay in memory and are not saved or uploaded."))
         capturePermission = label("")
-        permissions.addArrangedSubview(capturePermission)
-        permissions.addArrangedSubview(KeyboardButton(title: L("Open Screen Recording Settings"), target: self, action: #selector(openCapturePermissions)))
+        permissions.addArrangedSubview(section("Move and resize windows", [permission,
+            help("Allow Accessibility to place the windows you choose. This permission is required."),
+            KeyboardButton(title: L("Open Accessibility Settings"), target: self, action: #selector(openPermissions))]))
+        permissions.addArrangedSubview(section("Window previews", [capturePermission,
+            help("Screen recording is optional. Without it, suggestions show app icons. Previews are never saved or uploaded."),
+            KeyboardButton(title: L("Open Screen Recording Settings"), target: self, action: #selector(openCapturePermissions))]))
         permissions.addArrangedSubview(KeyboardButton(title: L("Refresh Status"), target: self, action: #selector(refresh)))
         add("Permissions", permissions)
         if !AXIsProcessTrusted() { tabs.selectTabViewItem(at: 3) }
-        panel.contentView = tabs
+        root.addArrangedSubview(tabs)
+        tabs.widthAnchor.constraint(equalToConstant: 592).isActive = true
+        tabs.heightAnchor.constraint(equalToConstant: 500).isActive = true
+        let footer = NSTextField(labelWithString: L("Changes are saved automatically."))
+        footer.font = .systemFont(ofSize: 11)
+        footer.textColor = .secondaryLabelColor
+        root.addArrangedSubview(footer)
+        panel.contentView = root
         panel.center()
         window = panel
+    }
+
+    @objc private func selectPage() {
+        guard let navigation, navigation.selectedSegment >= 0 else { return }
+        tabs?.selectTabViewItem(at: navigation.selectedSegment)
+    }
+
+    func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        if let tabViewItem { navigation?.selectedSegment = tabView.indexOfTabViewItem(tabViewItem) }
+    }
+
+    func showIssue(_ text: String) {
+        show()
+        let alert = NSAlert()
+        alert.messageText = L("Could not place the window")
+        alert.informativeText = text
+        if let window, window.attachedSheet == nil { alert.beginSheetModal(for: window) }
     }
 
     @objc private func refresh() {
@@ -165,19 +246,33 @@ import UniformTypeIdentifiers
         modifier.selectItem(at: Preferences.DragModifier.allCases.firstIndex(of: preferences.dragModifier) ?? 0)
         shortcutMessage.stringValue = shortcutStatus?() ?? ""
         exclusions.removeAllItems()
-        for id in preferences.excludedBundleIDs.sorted() { exclusions.addItem(withTitle: id) }
+        for id in preferences.excludedBundleIDs.sorted() {
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
+            let name = url.map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? id
+            exclusions.addItem(withTitle: name)
+            exclusions.lastItem?.representedObject = id
+            if let url {
+                let icon = NSWorkspace.shared.icon(forFile: url.path)
+                icon.size = CGSize(width: 16, height: 16)
+                exclusions.lastItem?.image = icon
+            }
+        }
+        exclusions.isEnabled = !preferences.excludedBundleIDs.isEmpty
+        if preferences.excludedBundleIDs.isEmpty { exclusions.addItem(withTitle: L("No excluded apps")) }
         removeExclusion.isEnabled = !preferences.excludedBundleIDs.isEmpty
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         automatic.isEnabled = updater != nil
         automatic.state = updater?.updater.automaticallyChecksForUpdates == true ? .on : .off
         permission.stringValue = AXIsProcessTrusted() ? L("Accessibility: allowed") : L("Accessibility: permission required")
         capturePermission.stringValue = CGPreflightScreenCaptureAccess() ? L("Screen recording: allowed") : L("Screen recording: icons only")
+        permission.textColor = AXIsProcessTrusted() ? .systemGreen : .systemOrange
+        capturePermission.textColor = CGPreflightScreenCaptureAccess() ? .systemGreen : .secondaryLabelColor
         if SMAppService.mainApp.status == .requiresApproval {
             message.stringValue = L("Approve login access in System Settings > General > Login Items.")
         } else if updater == nil {
             message.stringValue = updaterError ?? L("Updates are unavailable in this build.")
         } else {
-            message.stringValue = L("Updates connect to GitHub through Sparkle. Automatic checks are optional; installation requires your choice.")
+            message.stringValue = L("You choose when to install an update.")
         }
     }
 
@@ -216,7 +311,7 @@ import UniformTypeIdentifiers
         }
     }
     @objc private func deleteExclusion() {
-        guard let id = exclusions.titleOfSelectedItem else { return }
+        guard let id = exclusions.selectedItem?.representedObject as? String else { return }
         preferences.excludedBundleIDs.remove(id)
         onChange?()
         refresh()

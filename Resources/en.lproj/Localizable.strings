@@ -164,3 +164,35 @@
 "Половина и две справа" = "Half and two right";
 
 "Три ряда" = "Three rows";
+
+"Version %@" = "Version %@";
+
+"Settings sections" = "Settings sections";
+
+"Everyday use" = "Everyday use";
+
+"After placing a window, choose another app to fill the remaining space." = "After placing a window, choose another app to fill the remaining space.";
+
+"Updates" = "Updates";
+
+"Window placement" = "Window placement";
+
+"Drag a window towards the menu bar, choose a zone, then release." = "Drag a window towards the menu bar, choose a zone, then release.";
+
+"Keyboard" = "Keyboard";
+
+"Move and resize windows" = "Move and resize windows";
+
+"Allow Accessibility to place the windows you choose. This permission is required." = "Allow Accessibility to place the windows you choose. This permission is required.";
+
+"Window previews" = "Window previews";
+
+"Screen recording is optional. Without it, suggestions show app icons. Previews are never saved or uploaded." = "Screen recording is optional. Without it, suggestions show app icons. Previews are never saved or uploaded.";
+
+"Changes are saved automatically." = "Changes are saved automatically.";
+
+"Could not place the window" = "Could not place the window";
+
+"No excluded apps" = "No excluded apps";
+
+"You choose when to install an update." = "You choose when to install an update.";

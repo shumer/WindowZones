@@ -17,7 +17,12 @@ another built-in layout without sizing each window by hand.
 
 <img src="Resources/AppIcon.iconset/icon_128x128@2x.png" alt="WindowZones app icon showing three window zones" width="128">
 
-## New in 0.3.0
+## New in 0.3.1
+
+Settings now use clear grouped cards and permission status. Excluded apps show their
+names and icons. The development diagnostics window is hidden during normal use.
+
+## Introduced in 0.3.0
 
 The layout bar now uses a smoky surface below the menu bar, a compact hint and smooth
 transitions. Hover over a zone to preview where the window will go.
@@ -30,7 +35,7 @@ Settings now include General, Controls, Exclusions and Permissions. Choose your
 shortcut and drag modifier, toggle window suggestions, or exclude specific apps.
 Preferences persist between launches. The interface follows macOS in English or Russian.
 
-[Download 0.3.0](https://github.com/shumer/WindowZones/releases/tag/v0.3.0) or use
+[Download 0.3.1](https://github.com/shumer/WindowZones/releases/tag/v0.3.1) or use
 Check for Updates in the app.
 
 ## What can I do with it?

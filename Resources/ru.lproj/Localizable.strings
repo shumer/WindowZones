@@ -164,3 +164,35 @@
 "Половина и две справа" = "Половина и две справа";
 
 "Три ряда" = "Три ряда";
+
+"Version %@" = "Версия %@";
+
+"Settings sections" = "Разделы настроек";
+
+"Everyday use" = "На каждый день";
+
+"After placing a window, choose another app to fill the remaining space." = "После размещения окна выберите другое приложение для свободной зоны.";
+
+"Updates" = "Обновления";
+
+"Window placement" = "Размещение окон";
+
+"Drag a window towards the menu bar, choose a zone, then release." = "Потяните окно к строке меню, наведите на нужную зону и отпустите.";
+
+"Keyboard" = "Клавиатура";
+
+"Move and resize windows" = "Перемещение и размер окон";
+
+"Allow Accessibility to place the windows you choose. This permission is required." = "Разрешите Универсальный доступ, чтобы размещать выбранные окна. Без него перемещение не работает.";
+
+"Window previews" = "Миниатюры окон";
+
+"Screen recording is optional. Without it, suggestions show app icons. Previews are never saved or uploaded." = "Запись экрана необязательна. Без неё показываются значки приложений. Миниатюры не сохраняются и никуда не отправляются.";
+
+"Changes are saved automatically." = "Изменения сохраняются автоматически.";
+
+"Could not place the window" = "Не удалось разместить окно";
+
+"No excluded apps" = "Исключений пока нет";
+
+"You choose when to install an update." = "Вы сами выбираете, когда установить обновление.";

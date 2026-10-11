@@ -191,7 +191,9 @@ import LayoutStorage
         _ = add(L("Сменить shortcut: Ctrl+Shift / Ctrl+Option + Space"), #selector(changeShortcut))
         _ = add(L("Настройки…"), #selector(showSettings))
         _ = add(L("Проверить обновления…"), #selector(checkUpdates))
-        _ = add(L("Диагностика и разрешение"), #selector(showDiagnostics))
+        if CommandLine.arguments.contains("--diagnostics") {
+            _ = add(L("Диагностика и разрешение"), #selector(showDiagnostics))
+        }
         menu.addItem(.separator())
         _ = add(L("Завершить WindowZones"), #selector(quit))
         statusItem.menu = menu
@@ -386,7 +388,8 @@ import LayoutStorage
     private func recordAccessError(_ error: Error) {
         let issue = error as? AccessFailure
         record("\(issue?.status ?? "failed"): \(issue?.message ?? L("Ошибка AX"))")
-        showDiagnostics()
+        if diagnosticPicker { showDiagnostics() }
+        else { settings.showIssue(issue?.message ?? L("Ошибка AX")) }
     }
 
     private func showPicker(_ snapshot: WindowSnapshot) {
