@@ -35,9 +35,13 @@ struct DragBarTests {
 
     @Test func menuAnchorExpansionAndRetention() {
         let geometry = DragBarGeometry(layouts: BuiltInLayouts.all, area: area, scale: 2, top: area.maxY - 24)
-        #expect(geometry.frame.maxY == area.maxY - 24)
+        #expect(geometry.frame.maxY == area.maxY - 32)
         #expect(geometry.offer.maxY == geometry.frame.maxY)
         var interaction = DragBarInteraction()
+        interaction.update(pointer: CGPoint(x: geometry.offer.midX, y: geometry.frame.maxY + 4), screen: 1, geometry: geometry)
+        #expect(interaction.expanded)
+        #expect(interaction.selected == nil)
+        interaction = DragBarInteraction()
         let cell = geometry.cells.last!
         let point = CGPoint(x: cell.frame.midX, y: cell.frame.midY)
         #expect(interaction.drop(at: point, screen: 1, geometry: geometry) == nil)
@@ -57,7 +61,7 @@ struct DragBarTests {
             let geometry = DragBarGeometry(layouts: [layout], area: area, scale: scale)
             let zones = try LayoutGeometry.zones(for: layout, in: area, scale: scale)
             #expect(geometry.cells.map(\.target) == zones.map(\.frame))
-            #expect(geometry.frame.maxY == area.maxY)
+            #expect(geometry.frame.maxY == area.maxY - 8)
             #expect(geometry.cells.allSatisfy { geometry.frame.contains($0.frame) })
             #expect(!geometry.cells[0].frame.intersects(geometry.cells[1].frame))
         }

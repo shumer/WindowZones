@@ -196,3 +196,11 @@
 "No excluded apps" = "No excluded apps";
 
 "You choose when to install an update." = "You choose when to install an update.";
+
+"The suggested window changed. Try dragging again." = "The suggested window changed. Try dragging again.";
+
+"Pair placement cancelled." = "Pair placement cancelled.";
+
+"Could not arrange both windows. Previous positions will be restored where possible." = "Could not arrange both windows. Previous positions will be restored where possible.";
+
+"Some windows could not be restored. Undo is still available for them." = "Some windows could not be restored. Undo is still available for them.";

@@ -196,3 +196,11 @@
 "No excluded apps" = "Исключений пока нет";
 
 "You choose when to install an update." = "Вы сами выбираете, когда установить обновление.";
+
+"The suggested window changed. Try dragging again." = "Предложенное окно изменилось. Начните перенос заново.";
+
+"Pair placement cancelled." = "Размещение пары отменено.";
+
+"Could not arrange both windows. Previous positions will be restored where possible." = "Не удалось разместить оба окна. Вернём прежнее положение там, где это возможно.";
+
+"Some windows could not be restored. Undo is still available for them." = "Часть окон не удалось вернуть. Для них по-прежнему доступна отмена.";

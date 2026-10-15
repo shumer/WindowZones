@@ -9,36 +9,27 @@ import Geometry
     var expanded = false
     var contentProgress: CGFloat = 0
     var layoutSize = CGSize.zero
+    var cornerRadius: CGFloat { 10 + 6 * min(1, max(0, (bounds.height - 20) / 84)) }
+    var neighborIcon: NSImage?
+    var neighborZone: Int?
+    var pairCaption: String?
 
     private func localFrame(_ frame: CGRect) -> CGRect {
         let xScale = bounds.width / max(1, layoutSize.width)
-        let yScale = bounds.height / max(1, layoutSize.height)
-        return CGRect(x: (frame.minX - origin.x) * xScale, y: (frame.minY - origin.y) * yScale,
-                      width: frame.width * xScale, height: frame.height * yScale)
+        return CGRect(x: (frame.minX - origin.x) * xScale, y: bounds.height - layoutSize.height + frame.minY - origin.y,
+                      width: frame.width * xScale, height: frame.height)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         let contrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
         let opaque = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
-        let radius: CGFloat = expanded ? 12 : 8
-        let outline = NSBezierPath()
-        outline.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-        outline.line(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        outline.line(to: CGPoint(x: rect.maxX, y: rect.minY + radius))
-        outline.curve(to: CGPoint(x: rect.maxX - radius, y: rect.minY),
-                      controlPoint1: CGPoint(x: rect.maxX, y: rect.minY),
-                      controlPoint2: CGPoint(x: rect.maxX, y: rect.minY))
-        outline.line(to: CGPoint(x: rect.minX + radius, y: rect.minY))
-        outline.curve(to: CGPoint(x: rect.minX, y: rect.minY + radius),
-                      controlPoint1: CGPoint(x: rect.minX, y: rect.minY),
-                      controlPoint2: CGPoint(x: rect.minX, y: rect.minY))
-        outline.close()
+        let outline = NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
         let alpha: CGFloat = opaque ? 1 : 0.88
-        let top = NSColor(calibratedRed: 0.275, green: 0.314, blue: 0.353, alpha: alpha)
-        let bottom = NSColor(calibratedRed: 0.161, green: 0.200, blue: 0.239, alpha: alpha)
+        let top = NSColor(calibratedRed: 0.208, green: 0.220, blue: 0.235, alpha: alpha)
+        let bottom = NSColor(calibratedRed: 0.161, green: 0.173, blue: 0.188, alpha: alpha)
         NSGradient(starting: bottom, ending: top)?.draw(in: outline, angle: 90)
-        NSColor(calibratedWhite: 1, alpha: contrast ? 0.85 : 0.25).setStroke()
+        NSColor(calibratedWhite: 1, alpha: contrast ? 0.85 : 0.14).setStroke()
         outline.lineWidth = contrast ? 2 : 1
         outline.stroke()
         let context = NSGraphicsContext.current?.cgContext
@@ -46,7 +37,7 @@ import Geometry
         context?.setAlpha(1 - contentProgress)
         if contentProgress < 1 {
             NSColor(calibratedWhite: 0.85, alpha: 0.85).setFill()
-            NSBezierPath(roundedRect: CGRect(x: bounds.midX - 26, y: 6, width: 52, height: 3),
+            NSBezierPath(roundedRect: CGRect(x: bounds.midX - 22, y: bounds.midY - 1.5, width: 44, height: 3),
                          xRadius: 2, yRadius: 2).fill()
         }
         context?.restoreGState()
@@ -54,16 +45,27 @@ import Geometry
         context?.saveGState()
         context?.setAlpha(contentProgress)
         defer { context?.restoreGState() }
+        if selected?.layoutID == PairSuggestion.layoutID, let pairCaption {
+            let style = NSMutableParagraphStyle()
+            style.alignment = .center
+            style.lineBreakMode = .byTruncatingTail
+            (pairCaption as NSString).draw(in: CGRect(x: 12, y: 2, width: bounds.width - 24, height: 14),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.white, .paragraphStyle: style])
+        }
         for cell in cells {
             let active = selected == cell
             let rect = localFrame(cell.frame)
-            let path = NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4)
+            let path = NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5)
             (active ? NSColor.controlAccentColor : NSColor(calibratedRed: 0.627, green: 0.671, blue: 0.710, alpha: 0.78)).setFill()
             path.fill()
             NSColor(calibratedWhite: 1, alpha: contrast ? 0.95 : (active ? 0.8 : 0.5)).setStroke()
             path.lineWidth = active || contrast ? 2 : 1
             path.stroke()
-            if active {
+            if cell.layoutID == PairSuggestion.layoutID, cell.zoneIndex == neighborZone, let neighborIcon {
+                let size = min(22, max(0, min(rect.width, rect.height) - 6))
+                neighborIcon.draw(in: CGRect(x: rect.midX - size / 2, y: rect.midY - size / 2, width: size, height: size))
+            }
+            if active && !(cell.layoutID == PairSuggestion.layoutID && cell.zoneIndex == neighborZone) {
                 // Choose the higher-contrast mark for the user's system accent.
                 let accent = NSColor.controlAccentColor.usingColorSpace(.deviceRGB) ?? .systemBlue
                 func linear(_ value: CGFloat) -> CGFloat {
@@ -96,7 +98,11 @@ import Geometry
     private var hiding = false
     private var anchor: CGPoint?
 
-    func show(geometry: DragBarGeometry, interaction: DragBarInteraction) {
+    func show(geometry: DragBarGeometry, interaction: DragBarInteraction,
+              neighborIcon: NSImage? = nil, neighborZone: Int? = nil, pairCaption: String? = nil) {
+        drawing.neighborIcon = neighborIcon
+        drawing.neighborZone = neighborZone
+        drawing.pairCaption = pairCaption
         let rect = interaction.expanded ? geometry.frame : geometry.offer
         if panel == nil {
             let window = OverlayPanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -112,8 +118,8 @@ import Geometry
             material.blendingMode = .behindWindow
             material.state = .active
             material.wantsLayer = true
-            material.layer?.cornerRadius = 12
-            material.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            material.layer?.cornerRadius = 10
+            material.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             material.layer?.masksToBounds = true
             material.addSubview(drawing)
             drawing.autoresizingMask = [.width, .height]
@@ -142,7 +148,7 @@ import Geometry
         let content: CGFloat = interaction.expanded ? 1 : 0
         if hiding || targetFrame != rect || targetAlpha != 1 || targetContent != content || changedScreen {
             hiding = false
-            animate(to: rect, alpha: 1, content: content, duration: reduceMotion ? 0.10 : 0.20)
+            animate(to: rect, alpha: 1, content: content, duration: reduceMotion ? 0.10 : (interaction.expanded ? 0.22 : 0.20))
         }
     }
 
@@ -155,9 +161,8 @@ import Geometry
     }
 
     private func tucked(_ frame: CGRect) -> CGRect {
-        // Keep the upper edge anchored below the menu while sliding the lower edge up.
-        CGRect(x: frame.midX - frame.width * 0.46, y: frame.maxY - 2,
-               width: frame.width * 0.92, height: 2)
+        // Slide the whole surface upward without flattening its rounded shape.
+        frame.offsetBy(dx: 0, dy: 6)
     }
 
     private func animate(to frame: CGRect, alpha: CGFloat, content: CGFloat, duration: CFTimeInterval) {
@@ -191,7 +196,10 @@ import Geometry
                            width: mix(startFrame.width, targetFrame.width), height: mix(startFrame.height, targetFrame.height))
         panel.setFrame(frame, display: false)
         drawing.frame = CGRect(origin: .zero, size: frame.size)
-        drawing.contentProgress = mix(startContent, targetContent)
+        let reveal = targetContent > startContent ? CGFloat(min(1, max(0, (elapsed - 0.3) / 0.7))) : CGFloat(elapsed)
+        let contentEase = 1 - pow(1 - reveal, 3)
+        drawing.contentProgress = startContent + (targetContent - startContent) * contentEase
+        panel.contentView?.layer?.cornerRadius = drawing.cornerRadius
         drawing.needsDisplay = true
         panel.alphaValue = mix(startAlpha, targetAlpha)
         if elapsed == 1 {

@@ -40,9 +40,10 @@ struct Display: Sendable, Equatable {
     var zones: [CGRect] = []
     var selected: Int?
     var showsLabels = true
+    var highlightsAll = false
     override func draw(_ dirtyRect: NSRect) {
         for (index, zone) in zones.enumerated() {
-            let active = selected == index
+            let active = highlightsAll || selected == index
             let contrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
             let accent = NSColor.controlAccentColor
             (active ? accent.withAlphaComponent(0.16) : NSColor.windowBackgroundColor.withAlphaComponent(0.04)).setFill()
@@ -79,13 +80,15 @@ struct Display: Sendable, Equatable {
     private var lastSelected: Int?
     private var lastZones: [CGRect] = []
     private var lastShowsLabels = true
-    func show(display: Display, selected: Int?, zones: [CGRect]? = nil, showsLabels: Bool = true) {
+    private var lastHighlightsAll = false
+    func show(display: Display, selected: Int?, zones: [CGRect]? = nil, showsLabels: Bool = true, highlightsAll: Bool = false) {
         let resolved = zones ?? display.zones
-        if panel?.isVisible == true, lastDisplay == display, lastSelected == selected, lastZones == resolved, lastShowsLabels == showsLabels { return }
+        if panel?.isVisible == true, lastDisplay == display, lastSelected == selected, lastZones == resolved, lastShowsLabels == showsLabels, lastHighlightsAll == highlightsAll { return }
         lastDisplay = display
         lastSelected = selected
         lastZones = resolved
         lastShowsLabels = showsLabels
+        lastHighlightsAll = highlightsAll
         let current: OverlayPanel
         if let panel { current = panel } else {
             current = OverlayPanel(contentRect: display.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -119,6 +122,7 @@ struct Display: Sendable, Equatable {
             drawing.zones = resolved.map { $0.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY) }
             drawing.selected = selected
             drawing.showsLabels = showsLabels
+            drawing.highlightsAll = highlightsAll
             drawing.needsDisplay = true
         }
         if !current.isVisible { current.orderFrontRegardless() }

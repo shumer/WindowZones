@@ -39,6 +39,20 @@ import LayoutStorage
     private var operation: Cancellation?
     private var operationPID: pid_t?
     private var busy = false
+    private struct SuggestedPair {
+        let candidate: FillCandidate
+        let neighborZone: Int
+    }
+    private struct GroupRestore {
+        let snapshot: WindowSnapshot
+        let display: Display
+    }
+    private var pairSuggestions: [CGDirectDisplayID: SuggestedPair] = [:]
+    private var pairScanned = Set<CGDirectDisplayID>()
+    private var pairFrozen = Set<CGDirectDisplayID>()
+    private var recentApps: [pid_t] = []
+    private var groupUndo: [GroupRestore] = []
+    private var groupPIDs = Set<pid_t>()
     private var undo: (snapshot: WindowSnapshot, display: Display, actual: CGRect)?
     private let overlay = Overlay()
     private var globalMonitor: Any?
@@ -84,6 +98,7 @@ import LayoutStorage
         installHotkey(option: preferences.shortcut == .controlOptionSpace)
         settings.onChange = { [weak self] in self?.preferencesChanged() }
         settings.shortcutStatus = { [weak self] in self?.shortcutStatus ?? "" }
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(appActivated), name: NSWorkspace.didActivateApplicationNotification, object: nil)
         installMonitors()
         NotificationCenter.default.addObserver(self, selector: #selector(screenChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(contextChanged), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
@@ -569,6 +584,7 @@ import LayoutStorage
             if result.succeeded, let actual = result.actual {
                 if isUndo { undo = nil }
                 else {
+                    groupUndo = []
                     let source = Display.connected().max { lhs, rhs in
                         let a = lhs.axVisible.intersection(snapshot.frame)
                         let b = rhs.axVisible.intersection(snapshot.frame)
@@ -746,7 +762,14 @@ import LayoutStorage
 
     @objc private func undoPlacement() {
         closeFillAssistant()
-        guard !busy, let undo else { record(L("Нет доступной операции undo")); return }
+        guard !busy else { return }
+        if !groupUndo.isEmpty {
+            cancelPicker()
+            cancelDrag()
+            restoreGroup()
+            return
+        }
+        guard let undo else { record(L("Нет доступной операции undo")); return }
         cancelPicker()
         cancelDrag()
         let displays = Display.connected()
@@ -789,6 +812,8 @@ import LayoutStorage
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
         let pid = app.processIdentifier
         if undo?.snapshot.pid == pid { undo = nil }
+        groupUndo.removeAll { $0.snapshot.pid == pid }
+        if busy && groupPIDs.contains(pid) { operation?.cancel() }
         guard pickerSnapshot?.pid == pid || dragSnapshot?.pid == pid || (busy && operationPID == pid) else { return }
         cancelForContextChange(L("Целевое приложение завершено"))
     }
@@ -946,11 +971,21 @@ import LayoutStorage
                         let zones = activeZones(on: display)
                         overlay.show(display: display, selected: zones.firstIndex(where: { $0.contains(location) }), zones: zones)
                     } else {
-                        let geometry = DragBarGeometry(layouts: library.suggestedLayouts(in: display.visible), area: display.visible, scale: display.scale, top: display.menuBarBottom)
+                        loadPairSuggestion(snapshot: snapshot, display: display, token: token)
+                        let geometry = dragGeometry(on: display)
                         dragBarInteraction.update(pointer: location, screen: display.id, geometry: geometry)
-                        dragBar.show(geometry: geometry, interaction: dragBarInteraction)
+                        if dragBarInteraction.expanded { pairFrozen.insert(display.id) }
+                        let pair = pairSuggestions[display.id]
+                        let neighbor = pair.flatMap { NSRunningApplication(processIdentifier: $0.candidate.snapshot.pid) }
+                        let dragged = NSRunningApplication(processIdentifier: snapshot.pid)?.localizedName ?? L("Приложение")
+                        dragBar.show(geometry: geometry, interaction: dragBarInteraction,
+                            neighborIcon: neighbor?.icon, neighborZone: pair?.neighborZone,
+                            pairCaption: neighbor?.localizedName.map { dragged + " + " + $0 })
                         if let choice = dragBarInteraction.selected {
-                            overlay.show(display: display, selected: 0, zones: [choice.target], showsLabels: false)
+                            let isPair = choice.layoutID == PairSuggestion.layoutID
+                            overlay.show(display: display, selected: 0,
+                                zones: isPair ? resolvedZones(BuiltInLayouts.halves, on: display) : [choice.target],
+                                showsLabels: false, highlightsAll: isPair)
                         } else { overlay.hide() }
                     }
                 } else {
@@ -969,13 +1004,18 @@ import LayoutStorage
               let display = dragDisplays.first(where: { $0.frame.contains(location) }) else { cancelDrag(); return }
         let zone: CGRect
         let layoutID: UUID?
+        var selectedPair: SuggestedPair?
         if shift {
             guard let target = activeZones(on: display).first(where: { $0.contains(location) }) else { cancelDrag(); return }
             zone = target
             layoutID = nil
         } else {
-            let geometry = DragBarGeometry(layouts: library.suggestedLayouts(in: display.visible), area: display.visible, scale: display.scale, top: display.menuBarBottom)
+            let geometry = dragGeometry(on: display)
             guard let choice = dragBarInteraction.drop(at: location, screen: display.id, geometry: geometry) else { cancelDrag(); return }
+            if choice.layoutID == PairSuggestion.layoutID {
+                guard let pair = pairSuggestions[display.id], choice.zoneIndex != pair.neighborZone else { cancelDrag(); return }
+                selectedPair = pair
+            }
             zone = choice.target
             layoutID = choice.layoutID
         }
@@ -999,7 +1039,11 @@ import LayoutStorage
                     return
                 }
                 busy = false
-                perform(snapshot, target: display.ax(zone), display: display, isUndo: false, layoutID: layoutID, displayKey: displayKey)
+                if let selectedPair {
+                    performPair(snapshot, pair: selectedPair, display: display)
+                } else {
+                    perform(snapshot, target: display.ax(zone), display: display, isUndo: false, layoutID: layoutID, displayKey: displayKey)
+                }
             } catch {
                 busy = false
                 if !token.cancelled { recordAccessError(error) }
@@ -1007,7 +1051,163 @@ import LayoutStorage
         }
     }
 
+    @objc private func appActivated(_ notification: Notification) {
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              app.activationPolicy == .regular, app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+        recentApps.removeAll { $0 == app.processIdentifier }
+        recentApps.insert(app.processIdentifier, at: 0)
+        recentApps = Array(recentApps.prefix(30))
+    }
+
+    private func dragGeometry(on display: Display) -> DragBarGeometry {
+        var layouts = library.suggestedLayouts(in: display.visible)
+        if pairSuggestions[display.id] != nil { layouts.insert(PairSuggestion.layout, at: 0) }
+        return DragBarGeometry(layouts: layouts, area: display.visible, scale: display.scale, top: display.menuBarBottom,
+            reservedPairZone: pairSuggestions[display.id]?.neighborZone)
+    }
+
+    private func loadPairSuggestion(snapshot: WindowSnapshot, display: Display, token: Cancellation) {
+        guard !pairScanned.contains(display.id) else { return }
+        pairScanned.insert(display.id)
+        guard library.suggestedLayouts(in: display.visible).contains(BuiltInLayouts.halves),
+              !dragBarInteraction.expanded else { return }
+        let metadata = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let visible = metadata.compactMap { item -> (pid_t, CGRect)? in
+            guard (item[kCGWindowLayer as String] as? Int) == 0,
+                  let pid = item[kCGWindowOwnerPID as String] as? Int32, pid != snapshot.pid,
+                  let bounds = item[kCGWindowBounds as String] as? NSDictionary,
+                  let frame = CGRect(dictionaryRepresentation: bounds), frame.width > 0, frame.height > 0,
+                  !frame.intersection(display.axVisible).isNull,
+                  frame.intersection(display.axVisible).width * frame.intersection(display.axVisible).height > frame.width * frame.height * 0.5,
+                  let app = NSRunningApplication(processIdentifier: pid), app.activationPolicy == .regular,
+                  pid != ProcessInfo.processInfo.processIdentifier, !preferences.excludes(app.bundleIdentifier) else { return nil }
+            return (pid, frame)
+        }
+        var pids: [pid_t] = []
+        for pid in recentApps + visible.map({ $0.0 }) where visible.contains(where: { $0.0 == pid }) {
+            if !pids.contains(pid) { pids.append(pid) }
+        }
+        Task {
+            let candidates = await access.fillCandidates(pids: pids, area: display.axVisible, excluding: [snapshot], cancellation: token)
+                .filter { candidate in
+                    !candidate.minimized && visible.contains {
+                        $0.0 == candidate.snapshot.pid && pairFramesMatch($0.1, candidate.snapshot.frame)
+                    }
+                }
+            guard !token.cancelled, dragToken === token, !pairFrozen.contains(display.id),
+                  let pointerDisplay = dragDisplays.first(where: { $0.frame.contains(NSEvent.mouseLocation) }),
+                  pointerDisplay.id == display.id else { return }
+            let zones = resolvedZones(BuiltInLayouts.halves, on: display).map { display.ax($0) }
+            if let chosen = PairSuggestion.choose(frames: candidates.map { $0.snapshot.frame }, zones: zones) {
+                pairSuggestions[display.id] = SuggestedPair(candidate: candidates[chosen.candidate], neighborZone: chosen.neighborZone)
+            }
+        }
+    }
+
+    private func pairFramesMatch(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+        [abs(lhs.minX - rhs.minX), abs(lhs.minY - rhs.minY), abs(lhs.width - rhs.width), abs(lhs.height - rhs.height)].allSatisfy { $0 <= 2 }
+    }
+
+    private func sourceDisplay(_ snapshot: WindowSnapshot, fallback: Display) -> Display {
+        Display.connected().max { lhs, rhs in
+            let a = lhs.axVisible.intersection(snapshot.frame)
+            let b = rhs.axVisible.intersection(snapshot.frame)
+            return (a.isNull ? 0 : a.width * a.height) < (b.isNull ? 0 : b.width * b.height)
+        } ?? fallback
+    }
+
+    private func performPair(_ dragged: WindowSnapshot, pair: SuggestedPair, display: Display) {
+        guard !busy else { return }
+        let zones = resolvedZones(BuiltInLayouts.halves, on: display).map { display.ax($0) }
+        guard zones.count == 2 else { return }
+        let neighbor = pair.candidate.snapshot
+        busy = true
+        let token = Cancellation()
+        operation = token
+        operationDisplays = Display.connected()
+        groupPIDs = [dragged.pid, neighbor.pid]
+        operationPID = dragged.pid
+        Task {
+            defer { busy = false; groupPIDs = [] }
+            var attempted: [(restore: GroupRestore, rollback: CGRect)] = []
+            let oldUndo = undo
+            let oldGroupUndo = groupUndo
+            do {
+                try await access.validateTarget(dragged, cancellation: token)
+                try await access.validateTarget(neighbor, cancellation: token)
+                let neighborFrame = try await access.currentFrame(neighbor, cancellation: token)
+                guard pairFramesMatch(neighborFrame, neighbor.frame) else {
+                    throw AccessFailure(status: "cancelled", message: L("The suggested window changed. Try dragging again."))
+                }
+                for (snapshot, target) in [(dragged, zones[1 - pair.neighborZone]), (neighbor, zones[pair.neighborZone])] {
+                    guard !token.cancelled, Display.compatible(operationDisplays, Display.connected()),
+                          !preferences.excludes(NSRunningApplication(processIdentifier: snapshot.pid)?.bundleIdentifier) else {
+                        throw AccessFailure(status: "cancelled", message: L("Pair placement cancelled."))
+                    }
+                    let before = try await access.currentFrame(snapshot, cancellation: token)
+                    attempted.append((GroupRestore(snapshot: snapshot, display: sourceDisplay(snapshot, fallback: display)), before))
+                    undo = nil
+                    groupUndo = attempted.map(\.restore)
+                    let result = await access.place(snapshot, at: target, visibleArea: display.axVisible, cancellation: token)
+                    report(result, context: "Pair snap")
+                    guard !token.cancelled, result.succeeded, let actual = result.actual,
+                          FillSession.accepts(actual: actual, target: target) else {
+                        throw AccessFailure(status: "failed", message: L("Could not arrange both windows. Previous positions will be restored where possible."))
+                    }
+                }
+                sessionLayouts[display.id] = BuiltInLayouts.halves.id
+                await saveActiveLayout(BuiltInLayouts.halves.id, displayKey: display.uniqueStorageKey(in: operationDisplays))
+                if !token.cancelled { NSRunningApplication(processIdentifier: dragged.pid)?.activate(from: .current, options: []) }
+            } catch {
+                var unresolved = attempted.map(\.restore)
+                if !token.cancelled, Display.compatible(operationDisplays, Display.connected()) {
+                    for entry in attempted.reversed() {
+                        guard !token.cancelled else { break }
+                        let result = await access.place(entry.restore.snapshot, at: entry.rollback, visibleArea: nil, cancellation: token)
+                        report(result, context: "Pair rollback")
+                        if result.succeeded, let actual = result.actual, pairFramesMatch(actual, entry.rollback) {
+                            unresolved.removeAll { $0.snapshot.reference === entry.restore.snapshot.reference }
+                        }
+                    }
+                }
+                unresolved.removeAll { NSRunningApplication(processIdentifier: $0.snapshot.pid) == nil }
+                groupUndo = unresolved.isEmpty ? oldGroupUndo : unresolved
+                undo = unresolved.isEmpty ? oldUndo : nil
+                if !token.cancelled { settings.showIssue((error as? AccessFailure)?.message ?? L("Pair placement cancelled.")) }
+            }
+        }
+    }
+
+    private func restoreGroup() {
+        guard !busy, !groupUndo.isEmpty else { return }
+        let entries = groupUndo
+        busy = true
+        let token = Cancellation()
+        operation = token
+        operationDisplays = Display.connected()
+        groupPIDs = Set(entries.map { $0.snapshot.pid })
+        Task {
+            defer { busy = false; groupPIDs = [] }
+            for entry in entries.reversed() {
+                guard !token.cancelled, let first = Display.connected().first else { break }
+                let original = Display.connected().first { $0.id == entry.display.id }
+                let display = original ?? first
+                let target = GeometryEngine.undoTarget(entry.snapshot.frame, sourceScreen: entry.display.ax(entry.display.frame),
+                    currentScreen: original.map { $0.ax($0.frame) }, available: display.axVisible)
+                let result = await access.place(entry.snapshot, at: target, visibleArea: nil, cancellation: token)
+                report(result, context: "Pair Undo")
+                if !token.cancelled, result.succeeded, let actual = result.actual, pairFramesMatch(actual, target) {
+                    groupUndo.removeAll { $0.snapshot.reference === entry.snapshot.reference }
+                }
+            }
+            if !token.cancelled, !groupUndo.isEmpty { settings.showIssue(L("Some windows could not be restored. Undo is still available for them.")) }
+        }
+    }
+
     private func cancelDrag() {
+        pairSuggestions = [:]
+        pairScanned = []
+        pairFrozen = []
         dragToken?.cancel()
         dragToken = nil
         dragSnapshot = nil
